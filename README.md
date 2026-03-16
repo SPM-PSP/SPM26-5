@@ -1,5 +1,3 @@
-# SPM26-5 Group No.5
-### Group member: ZhangJingxuan, GaoLiying, WangJin, XiangQiao, XieHanxi
 # Agni
 
 > **你的知识火种** — 让文献与笔记在碰撞中生成珍贵结晶
