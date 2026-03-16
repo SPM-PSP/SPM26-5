@@ -65,8 +65,8 @@
 | 姓名 | 角色 | 主要职责 | GithubID |
 |------|--------|----------|------------------|
 | ZhangJingxuan | 项目经理 & 产品设计 | 需求分析、产品规划、UI/UX设计、团队协调 | @Xylobin |
-| XiangQiao | 前端开发 | Markdown编辑器、图谱可视化、交互界面实现 | |
-| XieHanxi | 后端开发 | 文件系统操作、数据库设计、全文搜索、同步功能 | |
+| XiangQiao | 前端开发 | Markdown编辑器、图谱可视化、交互界面实现 |  |
+| XieHanxi | 后端开发 | 文件系统操作、数据库设计、全文搜索、同步功能 | @xsz2814 |
 | GaoLiying | 文献管理 | PDF解析、元数据提取、引用格式处理 | @Leturxaug |
 | WangJin | 测试与文档 | 质量保证、用户文档、构建与发布 | @kskblzdjdwkzkblwmp |
 
