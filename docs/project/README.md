@@ -1,1 +1,2 @@
-# project file 1
+# project file : 项目文档目录
+# 主要内容：软件项目计划书、需求规格说明书...
