@@ -1,0 +1,14 @@
+name: agni
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pyside6
+  - sqlite
+  - pip
+  - pytest
+  - pytest-cov
+  - ruff
+  - mypy
+  - pip:
+      - pymupdf
