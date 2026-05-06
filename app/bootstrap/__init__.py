@@ -1,21 +1,16 @@
 from .app_context import AppContext
-from .config import AppConfig
-from .exceptions import (
-    AgniError,
-    StartupError,
-    WorkspaceError,
-    WorkspaceInitializationError,
-    WorkspaceValidationError,
-)
-from .startup import build_startup_pipeline
+from .config import AppConfig, WorkspaceConfig
+from .exceptions import BootstrapError, WorkspaceLayoutError
+from .paths import resolve_workspace_paths
+from .startup import bootstrap_app, bootstrap_workspace
 
 __all__ = [
-    "AgniError",
     "AppConfig",
+    "WorkspaceConfig",
     "AppContext",
-    "StartupError",
-    "WorkspaceError",
-    "WorkspaceInitializationError",
-    "WorkspaceValidationError",
-    "build_startup_pipeline",
+    "BootstrapError",
+    "WorkspaceLayoutError",
+    "resolve_workspace_paths",
+    "bootstrap_app",
+    "bootstrap_workspace",
 ]
