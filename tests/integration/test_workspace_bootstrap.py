@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 from __future__ import annotations
 
 import shutil
@@ -43,3 +44,52 @@ def test_workspace_bootstrap_initializes_database_file() -> None:
     assert workspace_context.database_path.exists()
     assert workspace_context.database_path.name == "agni.db"
     assert workspace_context.agni_dir.name == ".agni"
+=======
+import json
+
+from app.bootstrap.startup import bootstrap_workspace
+
+
+def test_bootstrap_workspace_creates_expected_layout(tmp_path):
+    workspace_root = tmp_path / "demo_workspace"
+
+    ctx = bootstrap_workspace(workspace_root)
+
+    assert ctx.workspace_root == workspace_root.resolve()
+    assert ctx.db_path == (workspace_root / ".agni" / "agni.db").resolve()
+
+    assert (workspace_root / "notes").exists()
+    assert (workspace_root / "attachments").exists()
+    assert (workspace_root / "exports").exists()
+    assert (workspace_root / ".agni").exists()
+    assert (workspace_root / ".agni" / "cache").exists()
+    assert (workspace_root / ".agni" / "state.json").exists()
+
+
+def test_bootstrap_workspace_creates_default_state_json(tmp_path):
+    workspace_root = tmp_path / "demo_workspace"
+
+    bootstrap_workspace(workspace_root)
+
+    state_path = workspace_root / ".agni" / "state.json"
+    data = json.loads(state_path.read_text(encoding="utf-8"))
+
+    assert "recent_notes" in data
+    assert "last_opened_note_id" in data
+    assert data["recent_notes"] == []
+    assert data["last_opened_note_id"] is None
+
+
+def test_bootstrap_workspace_is_idempotent(tmp_path):
+    workspace_root = tmp_path / "demo_workspace"
+
+    bootstrap_workspace(workspace_root)
+    bootstrap_workspace(workspace_root)
+
+    assert (workspace_root / "notes").exists()
+    assert (workspace_root / "attachments").exists()
+    assert (workspace_root / "exports").exists()
+    assert (workspace_root / ".agni").exists()
+    assert (workspace_root / ".agni" / "cache").exists()
+    assert (workspace_root / ".agni" / "state.json").exists()
+>>>>>>> 549c716 (Finish the basic code framework)

@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -30,3 +31,21 @@ class WorkspaceContextDTO:
             "inbox_note_path": str(self.inbox_note_path),
             "created_paths": [str(path) for path in self.created_paths],
         }
+=======
+from dataclasses import dataclass
+
+
+@dataclass(slots=True)
+class WorkspaceDTO:
+    root_path: str
+    notes_path: str
+    attachments_path: str
+    exports_path: str
+    db_path: str
+
+
+@dataclass(slots=True)
+class WorkspaceStatsDTO:
+    note_count: int = 0
+    attachment_count: int = 0
+>>>>>>> 549c716 (Finish the basic code framework)

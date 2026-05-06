@@ -1,0 +1,3 @@
+# Inbox
+
+Agni workspace initialized.
