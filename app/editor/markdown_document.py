@@ -348,7 +348,7 @@ class MarkdownDocument:
     def _build_heading_anchor(title: str) -> str:
         """
         构建简易标题锚点。
-        后续如果你们单独实现 heading_anchor.py，这里可替换为统一调用。
+        后续如果单独实现 heading_anchor.py，这里可替换为统一调用。
         """
         anchor = title.strip().lower()
         anchor = re.sub(r"[^\w\u4e00-\u9fff\s-]", "", anchor)
