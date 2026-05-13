@@ -2,16 +2,12 @@
 app/editor/markdown_document.py
 
 Markdown 文档会话对象。
-
-职责：
-1. 维护当前笔记的 Markdown 原文；
+阶段二增强版：
+1. 维护当前笔记 Markdown 原文；
 2. 维护编辑会话状态（是否修改、光标位置、文件 mtime、会话状态）；
-3. 为 note_editor_widget / note_controller / note_service 提供统一数据接口；
-4. 不直接负责数据库写入和关系解析，仅负责编辑器侧文档状态管理。
-
-当前版本目标：
-- 满足阶段一“中央编辑器可输入”的基础要求；
-- 为阶段二“笔记创建、载入、保存、重开不丢失”预留接口。
+3. 维护保存相关状态（last_saved_text、last_saved_time、version）；
+4. 为 note_editor_widget / note_controller / note_service 提供统一数据接口；
+5. 不直接负责数据库写入和关系解析，仅负责编辑器侧文档状态管理。
 """
 
 from dataclasses import dataclass, field
@@ -43,14 +39,6 @@ class HeadingItem:
 class MarkdownDocument:
     """
     编辑器文档对象 / 会话对象。
-
-    说明：
-    - note_id、file_path 对应业务层 Note 对象的基础身份信息；
-    - raw_text 是编辑器当前原始 Markdown 内容；
-    - is_dirty 表示内存内容是否未保存；
-    - cursor_position 为后续恢复光标位置预留；
-    - file_mtime 用于检测外部修改；
-    - session_status 用于界面层状态显示。
     """
 
     note_id: str | None = None
@@ -64,6 +52,7 @@ class MarkdownDocument:
     created_time: datetime = field(default_factory=datetime.now)
     updated_time: datetime = field(default_factory=datetime.now)
     last_saved_time: datetime | None = None
+    last_saved_text: str = ""
     version: int = 0
 
     def get_text(self) -> str:
@@ -73,10 +62,6 @@ class MarkdownDocument:
     def set_text(self, text: str, *, mark_dirty: bool = True) -> None:
         """
         设置全文内容。
-
-        参数：
-        - text: 新文本
-        - mark_dirty: 是否标记为已修改
         """
         text = text or ""
         if text == self.raw_text:
@@ -86,16 +71,26 @@ class MarkdownDocument:
         self.updated_time = datetime.now()
 
         if mark_dirty:
-            self.is_dirty = True
-            self.session_status = SESSION_STATUS_EDITING
+            self.is_dirty = self.raw_text != self.last_saved_text
+            self.session_status = SESSION_STATUS_EDITING if self.is_dirty else SESSION_STATUS_SAVED
+
+    def set_title(self, title: str) -> None:
+        """更新文档标题。"""
+        title = title or ""
+        if title == self.title:
+            return
+
+        self.title = title
+        self.updated_time = datetime.now()
+        self.is_dirty = True
+        self.session_status = SESSION_STATUS_EDITING
 
     def append_text(self, text: str) -> None:
         """在文末追加文本。"""
         if not text:
             return
-
         self.raw_text += text
-        self.is_dirty = True
+        self.is_dirty = self.raw_text != self.last_saved_text
         self.updated_time = datetime.now()
         self.session_status = SESSION_STATUS_EDITING
 
@@ -107,7 +102,7 @@ class MarkdownDocument:
         index = max(0, min(index, len(self.raw_text)))
         self.raw_text = self.raw_text[:index] + text + self.raw_text[index:]
         self.cursor_position = index + len(text)
-        self.is_dirty = True
+        self.is_dirty = self.raw_text != self.last_saved_text
         self.updated_time = datetime.now()
         self.session_status = SESSION_STATUS_EDITING
 
@@ -119,7 +114,7 @@ class MarkdownDocument:
 
         self.raw_text = self.raw_text[:start] + (text or "") + self.raw_text[end:]
         self.cursor_position = start + len(text or "")
-        self.is_dirty = True
+        self.is_dirty = self.raw_text != self.last_saved_text
         self.updated_time = datetime.now()
         self.session_status = SESSION_STATUS_EDITING
 
@@ -127,13 +122,17 @@ class MarkdownDocument:
         """清空文档内容。"""
         self.raw_text = ""
         self.cursor_position = 0
-        self.is_dirty = True
+        self.is_dirty = self.raw_text != self.last_saved_text
         self.updated_time = datetime.now()
         self.session_status = SESSION_STATUS_EDITING
 
     def update_cursor_position(self, position: int) -> None:
         """更新光标位置。"""
         self.cursor_position = max(0, position)
+
+    def restore_cursor_position(self) -> int:
+        """返回可用于重开文档时恢复的光标位置。"""
+        return max(0, min(self.cursor_position, len(self.raw_text)))
 
     def mark_dirty(self) -> None:
         """手动标记文档为已修改。"""
@@ -145,6 +144,16 @@ class MarkdownDocument:
         """清除未保存标记。"""
         self.is_dirty = False
 
+    def has_unsaved_changes(self) -> bool:
+        """判断当前是否存在未保存内容。"""
+        return self.title != "" and (self.is_dirty or self.raw_text != self.last_saved_text) or (
+            self.title == "" and (self.is_dirty or self.raw_text != self.last_saved_text)
+        )
+
+    def set_file_mtime(self, file_mtime: float | None) -> None:
+        """同步文件修改时间。"""
+        self.file_mtime = file_mtime
+
     def mark_saved(
         self,
         *,
@@ -153,14 +162,11 @@ class MarkdownDocument:
     ) -> None:
         """
         保存成功后调用。
-
-        参数：
-        - file_mtime: 保存后的文件修改时间
-        - version: 保存后的版本号（若业务层提供）
         """
         now = datetime.now()
         self.is_dirty = False
         self.last_saved_time = now
+        self.last_saved_text = self.raw_text
         self.updated_time = now
         self.session_status = SESSION_STATUS_SAVED
 
@@ -169,6 +175,17 @@ class MarkdownDocument:
 
         if version is not None:
             self.version = version
+
+    def restore_after_save(
+        self,
+        *,
+        file_mtime: float | None = None,
+        version: int | None = None,
+    ) -> None:
+        """
+        保存成功后的统一状态回写入口。
+        """
+        self.mark_saved(file_mtime=file_mtime, version=version)
 
     def mark_save_failed(self) -> None:
         """保存失败时调用。"""
@@ -193,6 +210,7 @@ class MarkdownDocument:
         file_path: str | Path | None = None,
         file_mtime: float | None = None,
         version: int | None = None,
+        cursor_position: int | None = None,
     ) -> None:
         """
         从已有文本载入文档内容。
@@ -209,18 +227,16 @@ class MarkdownDocument:
         if version is not None:
             self.version = version
 
-        self.cursor_position = 0
+        self.cursor_position = max(0, cursor_position or 0)
         self.is_dirty = False
+        self.last_saved_text = self.raw_text
+        self.last_saved_time = datetime.now()
         self.session_status = SESSION_STATUS_IDLE
         self.updated_time = datetime.now()
 
     def detect_external_modification(self, current_mtime: float | None) -> bool:
         """
         检查文件是否被外部修改。
-
-        返回：
-        - True: 已检测到外部修改
-        - False: 未检测到
         """
         if self.file_mtime is None or current_mtime is None:
             return False
@@ -237,7 +253,6 @@ class MarkdownDocument:
     def get_plain_text(self) -> str:
         """
         返回简化纯文本。
-        当前版本不做复杂 Markdown AST 解析，只做轻量清洗。
         """
         text = self.raw_text
         text = re.sub(r"`{1,3}.*?`{1,3}", "", text, flags=re.DOTALL)
@@ -250,7 +265,6 @@ class MarkdownDocument:
     def extract_headings(self) -> list[HeadingItem]:
         """
         提取 Markdown 标题，供后续大纲面板使用。
-        当前仅支持 ATX 风格标题（# ## ###）。
         """
         headings: list[HeadingItem] = []
 
@@ -276,10 +290,7 @@ class MarkdownDocument:
 
     def get_title_from_content(self) -> str:
         """
-        从文档内容推断标题：
-        1. 优先取第一个一级标题；
-        2. 否则取第一行非空文本；
-        3. 都没有则返回 Untitled。
+        从文档内容推断标题。
         """
         for heading in self.extract_headings():
             if heading.level == 1:
@@ -306,6 +317,19 @@ class MarkdownDocument:
             "updated_time": self.updated_time.isoformat(),
         }
 
+    def to_open_payload(self) -> dict[str, Any]:
+        """
+        提供给打开/重载流程使用的轻量载荷。
+        """
+        return {
+            "note_id": self.note_id,
+            "title": self.title,
+            "file_path": self.file_path,
+            "cursor_position": self.cursor_position,
+            "file_mtime": self.file_mtime,
+            "version": self.version,
+        }
+
     def to_dict(self) -> dict[str, Any]:
         """序列化为调试/日志友好的字典。"""
         return {
@@ -322,6 +346,7 @@ class MarkdownDocument:
             "last_saved_time": (
                 self.last_saved_time.isoformat() if self.last_saved_time else None
             ),
+            "last_saved_text": self.last_saved_text,
             "version": self.version,
         }
 
@@ -342,13 +367,13 @@ class MarkdownDocument:
             is_dirty=False,
             cursor_position=0,
             session_status=SESSION_STATUS_IDLE,
+            last_saved_text="",
         )
 
     @staticmethod
     def _build_heading_anchor(title: str) -> str:
         """
         构建简易标题锚点。
-        后续如果单独实现 heading_anchor.py，这里可替换为统一调用。
         """
         anchor = title.strip().lower()
         anchor = re.sub(r"[^\w\u4e00-\u9fff\s-]", "", anchor)

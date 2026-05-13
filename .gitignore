@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+/scripts/test_note_editor_widget.py
