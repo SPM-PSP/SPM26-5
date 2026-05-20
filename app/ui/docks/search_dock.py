@@ -3,13 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
+    QApplication,
     QDockWidget,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QPushButton,
     QTabWidget,
     QTextEdit,
@@ -69,6 +72,7 @@ class SearchDock(QDockWidget):
         layout.addLayout(search_row)
 
         self.search_results = QListWidget(page)
+        self.search_results.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         layout.addWidget(self.search_results, 1)
 
         self.search_preview = QTextEdit(page)
@@ -90,6 +94,7 @@ class SearchDock(QDockWidget):
         layout.addWidget(self.backlink_hint)
 
         self.backlink_list = QListWidget(page)
+        self.backlink_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         layout.addWidget(self.backlink_list, 1)
 
         return page
@@ -101,6 +106,8 @@ class SearchDock(QDockWidget):
         self.search_results.itemActivated.connect(self._emit_result_selected)
         self.backlink_list.itemActivated.connect(self._emit_result_selected)
         self.backlink_list.itemClicked.connect(self._emit_result_selected)
+        self.search_results.customContextMenuRequested.connect(self._show_result_context_menu)
+        self.backlink_list.customContextMenuRequested.connect(self._show_backlink_context_menu)
 
     def set_workspace(self, workspace_root: str | Path) -> None:
         self.workspace_root = Path(workspace_root)
@@ -185,6 +192,28 @@ class SearchDock(QDockWidget):
         note_path = item.data(Qt.ItemDataRole.UserRole)
         if note_path:
             self.result_selected.emit(Path(note_path))
+
+    def _show_result_context_menu(self, position) -> None:
+        self._show_note_context_menu(self.search_results, position)
+
+    def _show_backlink_context_menu(self, position) -> None:
+        self._show_note_context_menu(self.backlink_list, position)
+
+    def _show_note_context_menu(self, list_widget: QListWidget, position) -> None:
+        item = list_widget.itemAt(position)
+        if item is None or not item.data(Qt.ItemDataRole.UserRole):
+            return
+
+        note_path = Path(item.data(Qt.ItemDataRole.UserRole))
+        menu = QMenu(self)
+        open_action = QAction("打开", menu)
+        copy_path_action = QAction("复制路径", menu)
+        menu.addAction(open_action)
+        menu.addAction(copy_path_action)
+
+        open_action.triggered.connect(lambda: self.result_selected.emit(note_path))
+        copy_path_action.triggered.connect(lambda: QApplication.clipboard().setText(str(note_path)))
+        menu.exec(list_widget.mapToGlobal(position))
 
     def _build_context(self, text: str, query: str) -> str:
         lowered_text = text.lower()

@@ -29,6 +29,7 @@ def create_action(
 @dataclass(slots=True)
 class AgniActionSet:
     new_note: QAction
+    open_workspace: QAction
     save_note: QAction
     delete_note: QAction
     command_palette: QAction
@@ -47,6 +48,12 @@ class AgniActionSet:
                 "新建笔记",
                 shortcut="Ctrl+N",
                 status_tip="创建一篇新的 Markdown 笔记",
+            ),
+            open_workspace=create_action(
+                parent,
+                "打开工作区",
+                shortcut="Ctrl+O",
+                status_tip="选择一个 Agni 工作区目录",
             ),
             save_note=create_action(
                 parent,
@@ -323,6 +330,15 @@ def build_app_stylesheet() -> str:
     QLabel#note_editor_title_label {
         color: #a8e5ff;
         font-weight: 600;
+    }
+
+    QLabel#knowledge_dashboard,
+    QLabel#inspector_label {
+        background: #07101c;
+        border: 1px solid #1d3a59;
+        border-radius: 8px;
+        color: #d8e6f3;
+        line-height: 1.5;
     }
 
     QDialog QLabel#section_label {
