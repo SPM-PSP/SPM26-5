@@ -1,37 +1,123 @@
 """
 app/ui/widgets/note_editor_widget.py
 
-Markdown 编辑器控件。
-阶段二增强版：
-1. 提供基础 Markdown 文本编辑区域；
-2. 与 MarkdownDocument 同步文本、标题、光标位置和修改状态；
-3. 支持新建、打开、重载、保存请求构造；
-4. 为 note_controller / note_service 提供更稳定的阶段二接口。
+行级 Live Preview 版 NoteEditorWidget
+当前行源码编辑，其他行保持 Markdown 渲染。
+
+本版重点：
+1. 统一深色主题；
+2. 当前编辑行背景与整体风格一致；
+3. 当前编辑行文字更清晰；
+4. 保持与 main_window.py 的现有接口兼容。
 """
 
 from __future__ import annotations
 
 from typing import Optional
+import html
+import re
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QRect, QTimer
 from PySide6.QtGui import QAction, QFont, QKeySequence, QTextCursor
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
-    QPlainTextEdit,
     QLabel,
     QLineEdit,
     QSizePolicy,
     QMessageBox,
+    QTextBrowser,
+    QPlainTextEdit,
+    QFrame,
 )
 
 from app.editor.markdown_document import MarkdownDocument
 
 
+class LinePreviewBrowser(QTextBrowser):
+    """支持点击行的预览控件。"""
+
+    line_clicked = Signal(int)
+
+    def mousePressEvent(self, event):
+        cursor = self.cursorForPosition(event.pos())
+        line_index = max(0, cursor.blockNumber())
+        self.line_clicked.emit(line_index)
+        super().mousePressEvent(event)
+
+
+class FloatingLineEditor(QPlainTextEdit):
+    """覆盖在预览之上的当前行编辑器。"""
+
+    line_commit_requested = Signal()
+    move_up_requested = Signal()
+    move_down_requested = Signal()
+    split_line_requested = Signal(int)
+    merge_prev_requested = Signal()
+    merge_next_requested = Signal()
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.setTabChangesFocus(False)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        self.setStyleSheet("""
+            QPlainTextEdit {
+                background-color: #071a2f;
+                color: #f4f8ff;
+                border: none;
+                border-radius: 6px;
+                padding: 4px 8px;
+                selection-background-color: #1f5d99;
+                selection-color: #ffffff;
+            }
+        """)
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        cursor = self.textCursor()
+
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.split_line_requested.emit(cursor.position())
+            event.accept()
+            return
+
+        if key == Qt.Key.Key_Up:
+            if cursor.position() == 0:
+                self.move_up_requested.emit()
+                event.accept()
+                return
+
+        if key == Qt.Key.Key_Down:
+            if cursor.position() == len(self.toPlainText()):
+                self.move_down_requested.emit()
+                event.accept()
+                return
+
+        if key == Qt.Key.Key_Backspace:
+            if cursor.position() == 0:
+                self.merge_prev_requested.emit()
+                event.accept()
+                return
+
+        if key == Qt.Key.Key_Delete:
+            if cursor.position() == len(self.toPlainText()):
+                self.merge_next_requested.emit()
+                event.accept()
+                return
+
+        super().keyPressEvent(event)
+
+
 class NoteEditorWidget(QWidget):
     """
-    Markdown 编辑器控件。
+    行级 Live Preview 版 Markdown 编辑器。
+    当前行源码编辑，其他行渲染。
     """
 
     content_changed = Signal(str)
@@ -49,14 +135,42 @@ class NoteEditorWidget(QWidget):
         self._is_loading = False
         self._read_only_mode = False
 
+        self._lines: list[str] = [""]
+        self._current_line_index: int = 0
+
+        self._overlay_refresh_timer = QTimer(self)
+        self._overlay_refresh_timer.setSingleShot(True)
+        self._overlay_refresh_timer.setInterval(20)
+
         self._build_ui()
         self._bind_signals()
         self._build_actions()
         self._apply_document_to_view()
 
+    # ------------------------------------------------------------------
+    # UI
+    # ------------------------------------------------------------------
+
     def _build_ui(self) -> None:
-        """构建基础界面。"""
         self.setObjectName("note_editor_widget")
+        self.setStyleSheet("""
+            QWidget#note_editor_widget {
+                background-color: #06182d;
+            }
+            QLabel {
+                color: #dbe9ff;
+            }
+            QLineEdit {
+                background-color: #071a2f;
+                color: #eaf2ff;
+                border: 1px solid #1f5d99;
+                border-radius: 8px;
+                padding: 6px 10px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #4f8cff;
+            }
+        """)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -67,91 +181,391 @@ class NoteEditorWidget(QWidget):
         header_layout.setSpacing(6)
 
         title_hint_label = QLabel("标题：", self)
-        title_hint_label.setObjectName("note_editor_title_hint_label")
-
         self.title_edit = QLineEdit(self)
-        self.title_edit.setObjectName("note_editor_title_edit")
         self.title_edit.setPlaceholderText("请输入笔记标题")
 
         self.status_label = QLabel("idle", self)
-        self.status_label.setObjectName("note_editor_status_label")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         header_layout.addWidget(title_hint_label)
         header_layout.addWidget(self.title_edit, 1)
         header_layout.addWidget(self.status_label)
 
-        self.editor = QPlainTextEdit(self)
-        self.editor.setObjectName("note_editor_text_edit")
-        self.editor.setPlaceholderText("请输入笔记内容...")
-        self.editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
-        self.editor.setTabStopDistance(32)
-        self.editor.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.preview = LinePreviewBrowser(self)
+        self.preview.setOpenLinks(False)
+        self.preview.setOpenExternalLinks(False)
+        self.preview.setReadOnly(True)
+        self.preview.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-        font = QFont()
-        font.setPointSize(11)
-        self.editor.setFont(font)
+        preview_font = QFont()
+        preview_font.setPointSize(11)
+        self.preview.setFont(preview_font)
+
+        self.preview.setStyleSheet("""
+            QTextBrowser {
+                background-color: #071a2f;
+                color: #eaf2ff;
+                border: 1px solid #1f5d99;
+                border-radius: 8px;
+                padding: 6px;
+            }
+        """)
+
+        self.line_editor = FloatingLineEditor(self.preview.viewport())
+        editor_font = QFont()
+        editor_font.setPointSize(11)
+        self.line_editor.setFont(editor_font)
+        self.line_editor.hide()
 
         layout.addLayout(header_layout)
-        layout.addWidget(self.editor, 1)
+        layout.addWidget(self.preview, 1)
 
     def _bind_signals(self) -> None:
-        """绑定内部信号。"""
-        self.editor.textChanged.connect(self._on_text_changed)
-        self.editor.cursorPositionChanged.connect(self._on_cursor_position_changed)
         self.title_edit.textEdited.connect(self._on_title_edited)
+        self.preview.line_clicked.connect(self._on_preview_line_clicked)
+
+        self.line_editor.textChanged.connect(self._on_line_editor_text_changed)
+        self.line_editor.cursorPositionChanged.connect(self._on_line_editor_cursor_changed)
+        self.line_editor.move_up_requested.connect(self._move_to_previous_line)
+        self.line_editor.move_down_requested.connect(self._move_to_next_line)
+        self.line_editor.split_line_requested.connect(self._split_current_line)
+        self.line_editor.merge_prev_requested.connect(self._merge_with_previous_line)
+        self.line_editor.merge_next_requested.connect(self._merge_with_next_line)
+
+        self._overlay_refresh_timer.timeout.connect(self._reposition_line_editor)
 
     def _build_actions(self) -> None:
-        """构建快捷键动作。"""
         self.save_action = QAction(self)
         self.save_action.setShortcut(QKeySequence.StandardKey.Save)
         self.save_action.triggered.connect(self.request_save)
         self.addAction(self.save_action)
 
-    def _apply_document_to_view(self) -> None:
-        """将当前 MarkdownDocument 状态同步到界面。"""
-        self._is_loading = True
-        try:
-            self.title_edit.setText(self._document.title or "")
-            self.editor.setPlainText(self._document.get_text())
-            self.status_label.setText(self._document.session_status)
+    # ------------------------------------------------------------------
+    # 渲染
+    # ------------------------------------------------------------------
 
-            cursor = self.editor.textCursor()
-            cursor_position = self._document.restore_cursor_position()
-            cursor.setPosition(cursor_position)
-            self.editor.setTextCursor(cursor)
+    def _set_lines_from_text(self, text: str) -> None:
+        self._lines = text.split("\n")
+        if not self._lines:
+            self._lines = [""]
+        self._current_line_index = max(0, min(self._current_line_index, len(self._lines) - 1))
 
-            self.editor.setReadOnly(self._read_only_mode)
+    def _get_text_from_lines(self) -> str:
+        return "\n".join(self._lines)
 
-            self.status_changed.emit(self._document.session_status)
-        finally:
-            self._is_loading = False
+    def _refresh_preview(self) -> None:
+        html_text = self._render_document_html(self._lines, self._current_line_index)
+        self.preview.setHtml(html_text)
+        self._overlay_refresh_timer.start()
 
-    def _on_text_changed(self) -> None:
-        """文本变化时同步文档状态。"""
+    def _render_document_html(self, lines: list[str], editing_line_index: int) -> str:
+        body_parts = []
+        for i, line in enumerate(lines):
+            if i == editing_line_index:
+                body_parts.append('<div class="agni-line editing-line">&nbsp;</div>')
+            else:
+                body_parts.append(self._render_line_to_html(line))
+
+        return f"""
+        <html>
+        <head>
+        <style>
+            body {{
+                font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+                font-size: 11pt;
+                line-height: 1.75;
+                padding: 12px 14px;
+                margin: 0;
+                color: #eaf2ff;
+                background: #071a2f;
+            }}
+            .agni-line {{
+                min-height: 30px;
+                margin: 0;
+                padding: 4px 0;
+                white-space: pre-wrap;
+                word-wrap: break-word;
+                color: #eaf2ff;
+            }}
+            .editing-line {{
+            background: #071a2f;
+            border: none;
+            border-radius: 6px;
+}}
+            h1, h2, h3, h4, h5, h6 {{
+                margin: 8px 0 6px 0;
+                font-weight: 700;
+                color: #ffffff;
+            }}
+            h1 {{ font-size: 20pt; }}
+            h2 {{ font-size: 17pt; }}
+            h3 {{ font-size: 15pt; }}
+            h4 {{ font-size: 13pt; }}
+            h5 {{ font-size: 12pt; }}
+            h6 {{ font-size: 11pt; }}
+
+            p {{
+                margin: 0;
+                color: #dbe9ff;
+            }}
+            
+            .agni-hr {{
+                border: none;
+                border-top: 1px solid #2f6ea8;
+                margin: 8px 0;
+            }}
+
+            .list-item {{
+                margin-left: 18px;
+                color: #dbe9ff;
+            }}
+
+            .blockquote {{
+                border-left: 3px solid #2f6ea8;
+                padding-left: 10px;
+                color: #b9d4ff;
+            }}
+
+            .code-inline {{
+                background: #102845;
+                border: 1px solid #1e466d;
+                border-radius: 4px;
+                padding: 1px 4px;
+                font-family: Consolas, monospace;
+                color: #ffd580;
+            }}
+
+            .wikilink {{
+                color: #6cb6ff;
+                font-weight: 600;
+            }}
+
+            .citation {{
+                color: #c792ea;
+                font-weight: 600;
+            }}
+
+            a {{
+                color: #6cb6ff;
+                text-decoration: none;
+            }}
+
+            strong {{
+                color: #ffffff;
+                font-weight: 700;
+            }}
+
+            em {{
+                color: #dbe9ff;
+                font-style: italic;
+            }}
+        </style>
+        </head>
+        <body>
+            {''.join(body_parts)}
+        </body>
+        </html>
+        """
+
+    def _render_line_to_html(self, line: str) -> str:
+        stripped = line.rstrip()
+
+        if stripped == "":
+            return '<div class="agni-line">&nbsp;</div>'
+
+        # Markdown 分隔线：---  ___  ***
+        hr_match = re.match(r"^\s*([-_*])\s*(\1\s*){2,}$", stripped)
+        if hr_match:
+            return '<div class="agni-line"><hr class="agni-hr"></div>'
+
+        heading_match = re.match(r"^(#{1,6})\s+(.*)$", stripped)
+        if heading_match:
+            level = len(heading_match.group(1))
+            content = self._render_inline_html(heading_match.group(2))
+            return f'<div class="agni-line"><h{level}>{content}</h{level}></div>'
+
+        blockquote_match = re.match(r"^>\s?(.*)$", stripped)
+        if blockquote_match:
+            content = self._render_inline_html(blockquote_match.group(1))
+            return f'<div class="agni-line blockquote">{content}</div>'
+
+        list_match = re.match(r"^[-*+]\s+(.*)$", stripped)
+        if list_match:
+            content = self._render_inline_html(list_match.group(1))
+            return f'<div class="agni-line list-item">• {content}</div>'
+
+        ordered_match = re.match(r"^(\d+)\.\s+(.*)$", stripped)
+        if ordered_match:
+            index = ordered_match.group(1)
+            content = self._render_inline_html(ordered_match.group(2))
+            return f'<div class="agni-line list-item">{index}. {content}</div>'
+
+        content = self._render_inline_html(stripped)
+        return f'<div class="agni-line"><p>{content}</p></div>'
+
+    def _render_inline_html(self, text: str) -> str:
+        escaped = html.escape(text)
+
+        escaped = re.sub(
+            r"\[\[(.*?)(\|(.*?))?\]\]",
+            lambda m: f'<span class="wikilink">{html.escape(m.group(3) or m.group(1))}</span>',
+            escaped,
+        )
+
+        escaped = re.sub(
+            r"\[@([^\]]+)\]",
+            lambda m: f'<span class="citation">[@{html.escape(m.group(1))}]</span>',
+            escaped,
+        )
+
+        escaped = re.sub(
+            r"\[(.*?)\]\((.*?)\)",
+            lambda m: f'<a href="{html.escape(m.group(2))}">{m.group(1)}</a>',
+            escaped,
+        )
+
+        escaped = re.sub(
+            r"`([^`]+)`",
+            lambda m: f'<span class="code-inline">{m.group(1)}</span>',
+            escaped,
+        )
+
+        escaped = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escaped)
+        escaped = re.sub(r"\*(.+?)\*", r"<em>\1</em>", escaped)
+
+        return escaped
+
+    # ------------------------------------------------------------------
+    # 行编辑器定位与切换
+    # ------------------------------------------------------------------
+
+    def _reposition_line_editor(self) -> None:
+        block = self.preview.document().findBlockByNumber(self._current_line_index)
+        if not block.isValid():
+            self.line_editor.hide()
+            return
+
+        cursor = QTextCursor(block)
+        rect = self.preview.cursorRect(cursor)
+
+        viewport_rect = self.preview.viewport().rect()
+        x = 8
+        y = rect.top()
+        width = max(120, viewport_rect.width() - 16)
+
+        line_height = max(40, self.line_editor.fontMetrics().height() + 18)
+        self.line_editor.setGeometry(QRect(x, y, width, line_height))
+        self.line_editor.show()
+        self.line_editor.raise_()
+
+    def _switch_to_line(self, line_index: int, *, focus: bool = True) -> None:
+        line_index = max(0, min(line_index, len(self._lines) - 1))
+        self._current_line_index = line_index
+
+        self.line_editor.blockSignals(True)
+        self.line_editor.setPlainText(self._lines[self._current_line_index])
+        self.line_editor.blockSignals(False)
+
+        cursor = self.line_editor.textCursor()
+        cursor.setPosition(len(self._lines[self._current_line_index]))
+        self.line_editor.setTextCursor(cursor)
+
+        self._refresh_preview()
+
+        if focus:
+            self.line_editor.setFocus()
+
+    def _on_preview_line_clicked(self, line_index: int) -> None:
+        self._switch_to_line(line_index, focus=True)
+
+    # ------------------------------------------------------------------
+    # 行编辑逻辑
+    # ------------------------------------------------------------------
+
+    def _on_line_editor_text_changed(self) -> None:
         if self._is_loading:
             return
 
-        text = self.editor.toPlainText()
-        self._document.set_text(text, mark_dirty=True)
+        self._lines[self._current_line_index] = self.line_editor.toPlainText()
+        full_text = self._get_text_from_lines()
 
+        self._document.set_text(full_text, mark_dirty=True)
         self.status_label.setText(self._document.session_status)
-        self.content_changed.emit(text)
+
+        self.content_changed.emit(full_text)
         self.document_changed.emit(self._document)
         self.status_changed.emit(self._document.session_status)
 
-    def _on_cursor_position_changed(self) -> None:
-        """光标变化时同步文档状态。"""
-        if self._is_loading:
+        self._refresh_preview()
+
+    def _on_line_editor_cursor_changed(self) -> None:
+        cursor = self.line_editor.textCursor()
+        position_in_line = cursor.position()
+        absolute = self._line_column_to_absolute_position(
+            self._current_line_index,
+            position_in_line,
+        )
+        self._document.update_cursor_position(absolute)
+        self.cursor_position_changed.emit(absolute)
+
+    def _split_current_line(self, position: int) -> None:
+        current = self._lines[self._current_line_index]
+        left = current[:position]
+        right = current[position:]
+
+        self._lines[self._current_line_index] = left
+        self._lines.insert(self._current_line_index + 1, right)
+
+        self._document.set_text(self._get_text_from_lines(), mark_dirty=True)
+        self._switch_to_line(self._current_line_index + 1, focus=True)
+
+    def _merge_with_previous_line(self) -> None:
+        if self._current_line_index == 0:
             return
 
-        position = self.editor.textCursor().position()
-        self._document.update_cursor_position(position)
+        prev_line = self._lines[self._current_line_index - 1]
+        current_line = self._lines[self._current_line_index]
+        new_line = prev_line + current_line
 
-        self.cursor_position_changed.emit(position)
+        self._lines[self._current_line_index - 1] = new_line
+        del self._lines[self._current_line_index]
+
+        self._document.set_text(self._get_text_from_lines(), mark_dirty=True)
+        self._switch_to_line(self._current_line_index - 1, focus=True)
+
+        cursor = self.line_editor.textCursor()
+        cursor.setPosition(len(prev_line))
+        self.line_editor.setTextCursor(cursor)
+
+    def _merge_with_next_line(self) -> None:
+        if self._current_line_index >= len(self._lines) - 1:
+            return
+
+        current_line = self._lines[self._current_line_index]
+        next_line = self._lines[self._current_line_index + 1]
+        self._lines[self._current_line_index] = current_line + next_line
+        del self._lines[self._current_line_index + 1]
+
+        self._document.set_text(self._get_text_from_lines(), mark_dirty=True)
+        self._switch_to_line(self._current_line_index, focus=True)
+
+        cursor = self.line_editor.textCursor()
+        cursor.setPosition(len(current_line))
+        self.line_editor.setTextCursor(cursor)
+
+    def _move_to_previous_line(self) -> None:
+        if self._current_line_index > 0:
+            self._switch_to_line(self._current_line_index - 1, focus=True)
+
+    def _move_to_next_line(self) -> None:
+        if self._current_line_index < len(self._lines) - 1:
+            self._switch_to_line(self._current_line_index + 1, focus=True)
+
+    # ------------------------------------------------------------------
+    # 标题 / 文档同步
+    # ------------------------------------------------------------------
 
     def _on_title_edited(self, title: str) -> None:
-        """标题变化时同步文档状态。"""
         if self._is_loading:
             return
 
@@ -162,9 +576,62 @@ class NoteEditorWidget(QWidget):
         self.document_changed.emit(self._document)
         self.status_changed.emit(self._document.session_status)
 
-    # -----------------------------
+    def _absolute_position_to_line_column(self, absolute_pos: int) -> tuple[int, int]:
+        text = self._get_text_from_lines()
+        absolute_pos = max(0, min(absolute_pos, len(text)))
+
+        lines = self._lines
+        current = 0
+        for i, line in enumerate(lines):
+            line_len = len(line)
+            if absolute_pos <= current + line_len:
+                return i, absolute_pos - current
+            current += line_len + 1
+
+        return len(lines) - 1, len(lines[-1])
+
+    def _line_column_to_absolute_position(self, line_index: int, column: int) -> int:
+        line_index = max(0, min(line_index, len(self._lines) - 1))
+        absolute = 0
+        for i in range(line_index):
+            absolute += len(self._lines[i]) + 1
+        absolute += max(0, min(column, len(self._lines[line_index])))
+        return absolute
+
+    def _apply_document_to_view(self) -> None:
+        self._is_loading = True
+        try:
+            self.title_edit.setText(self._document.title or "")
+            self.status_label.setText(self._document.session_status)
+
+            self._set_lines_from_text(self._document.get_text())
+
+            line_index, column = self._absolute_position_to_line_column(
+                self._document.restore_cursor_position()
+            )
+            self._current_line_index = line_index
+
+            self._switch_to_line(self._current_line_index, focus=False)
+
+            cursor = self.line_editor.textCursor()
+            cursor.setPosition(column)
+            self.line_editor.setTextCursor(cursor)
+
+            self.status_changed.emit(self._document.session_status)
+        finally:
+            self._is_loading = False
+
+    # ------------------------------------------------------------------
     # 文档装载与创建
-    # -----------------------------
+    # ------------------------------------------------------------------
+
+    def get_document(self) -> MarkdownDocument:
+        return self._document
+
+    def set_document(self, document: MarkdownDocument) -> None:
+        self._document = document
+        self._apply_document_to_view()
+        self.document_changed.emit(self._document)
 
     def new_note(
         self,
@@ -173,7 +640,6 @@ class NoteEditorWidget(QWidget):
         title: str = "",
         file_path: str | None = None,
     ) -> None:
-        """新建空白笔记。"""
         self._document = MarkdownDocument.create_empty(
             note_id=note_id,
             title=title,
@@ -193,7 +659,6 @@ class NoteEditorWidget(QWidget):
         version: int | None = None,
         cursor_position: int | None = None,
     ) -> None:
-        """打开已有笔记。"""
         self._document.load_from_text(
             text=text,
             note_id=note_id,
@@ -213,7 +678,6 @@ class NoteEditorWidget(QWidget):
         file_mtime: float | None = None,
         version: int | None = None,
     ) -> None:
-        """重载当前笔记内容。"""
         self._document.load_from_text(
             text=text,
             note_id=self._document.note_id,
@@ -236,7 +700,6 @@ class NoteEditorWidget(QWidget):
         file_mtime: float | None = None,
         version: int | None = None,
     ) -> None:
-        """兼容之前接口。"""
         self.open_note(
             text=text,
             note_id=note_id,
@@ -254,27 +717,18 @@ class NoteEditorWidget(QWidget):
         title: str = "",
         file_path: str | None = None,
     ) -> None:
-        """兼容之前接口。"""
         self.new_note(note_id=note_id, title=title, file_path=file_path)
 
-    # -----------------------------
-    # 基础对外接口
-    # -----------------------------
-
-    def get_document(self) -> MarkdownDocument:
-        return self._document
-
-    def set_document(self, document: MarkdownDocument) -> None:
-        self._document = document
-        self._apply_document_to_view()
-        self.document_changed.emit(self._document)
+    # ------------------------------------------------------------------
+    # 基础接口
+    # ------------------------------------------------------------------
 
     def set_text(self, text: str) -> None:
         self._document.set_text(text, mark_dirty=False)
         self._apply_document_to_view()
 
     def get_text(self) -> str:
-        return self.editor.toPlainText()
+        return self._get_text_from_lines()
 
     def get_title(self) -> str:
         return self.title_edit.text().strip()
@@ -290,27 +744,29 @@ class NoteEditorWidget(QWidget):
         self.document_changed.emit(self._document)
 
     def focus_editor(self) -> None:
-        self.editor.setFocus()
+        self.line_editor.setFocus()
 
     def insert_text_at_cursor(self, text: str) -> None:
         if not text:
             return
-        cursor = self.editor.textCursor()
+        cursor = self.line_editor.textCursor()
         cursor.insertText(text)
-        self.editor.setTextCursor(cursor)
+        self.line_editor.setTextCursor(cursor)
 
     def replace_selection(self, text: str) -> None:
-        cursor = self.editor.textCursor()
+        cursor = self.line_editor.textCursor()
         cursor.insertText(text)
 
     def get_cursor_position(self) -> int:
-        return self.editor.textCursor().position()
+        return self._document.cursor_position
 
     def set_cursor_position(self, position: int) -> None:
-        cursor = self.editor.textCursor()
-        position = max(0, min(position, len(self.editor.toPlainText())))
-        cursor.setPosition(position)
-        self.editor.setTextCursor(cursor)
+        line_index, column = self._absolute_position_to_line_column(position)
+        self._switch_to_line(line_index, focus=True)
+
+        cursor = self.line_editor.textCursor()
+        cursor.setPosition(column)
+        self.line_editor.setTextCursor(cursor)
 
         self._document.update_cursor_position(position)
         self.cursor_position_changed.emit(position)
@@ -323,36 +779,25 @@ class NoteEditorWidget(QWidget):
 
     def set_read_only_mode(self, enabled: bool) -> None:
         self._read_only_mode = enabled
-        self.editor.setReadOnly(enabled)
+        self.line_editor.setReadOnly(enabled)
+        self.title_edit.setReadOnly(enabled)
 
-    # -----------------------------
+    # ------------------------------------------------------------------
     # 保存 / 打开 payload
-    # -----------------------------
+    # ------------------------------------------------------------------
 
     def build_save_payload(self) -> dict:
-        """
-        构造保存载荷。
-        """
         self._document.set_title(self.get_title())
         return self._document.to_save_payload()
 
     def build_open_payload(self) -> dict:
-        """
-        构造当前打开文档状态载荷。
-        """
         self._document.set_title(self.get_title())
         return self._document.to_open_payload()
 
     def request_save(self) -> None:
-        """
-        发出保存请求。
-        """
         self.save_requested.emit(self.build_save_payload())
 
     def request_open(self) -> None:
-        """
-        发出打开/重载相关状态请求。
-        """
         self.open_requested.emit(self.build_open_payload())
 
     def mark_saved(
@@ -379,11 +824,6 @@ class NoteEditorWidget(QWidget):
         self.document_changed.emit(self._document)
 
     def maybe_save_before_close(self) -> bool:
-        """
-        阶段二预留：
-        当前先提供最基础的关闭前判断。
-        True 表示可以继续关闭，False 表示取消关闭。
-        """
         if not self.has_unsaved_changes():
             return True
 
@@ -396,15 +836,18 @@ class NoteEditorWidget(QWidget):
         )
         return result == QMessageBox.StandardButton.Yes
 
-    # -----------------------------
-    # 后续扩展接口
-    # -----------------------------
+    # ------------------------------------------------------------------
+    # 扩展接口
+    # ------------------------------------------------------------------
 
     def get_selected_text(self) -> str:
-        return self.editor.textCursor().selectedText()
+        return self.line_editor.textCursor().selectedText()
 
     def get_plain_text(self) -> str:
         return self._document.get_plain_text()
 
     def extract_headings(self):
         return self._document.extract_headings()
+
+    def refresh_preview_now(self) -> None:
+        self._refresh_preview()
