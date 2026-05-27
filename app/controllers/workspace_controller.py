@@ -22,9 +22,24 @@ class WorkspaceController:
             "message": "Workspace is ready.",
             "data": {
                 "workspace_context": result["data"]["workspace_context"],
+                "workspace_root": result["data"]["workspace_root"],
+                "created_paths": result["data"]["created_paths"],
                 "next_action": "open_main_window",
             },
         }
 
     def create_or_repair_workspace(self, workspace_path: str | Path) -> dict[str, object]:
-        return self.workspace_service.initialize_workspace(workspace_path)
+        result = self.workspace_service.ensure_workspace_structure(workspace_path)
+        if not result["success"]:
+            return result
+
+        return {
+            "success": True,
+            "message": "Workspace has been created or repaired.",
+            "data": {
+                "workspace_context": result["data"]["workspace_context"],
+                "workspace_root": result["data"]["workspace_root"],
+                "created_paths": result["data"]["created_paths"],
+                "next_action": "open_main_window",
+            },
+        }

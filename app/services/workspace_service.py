@@ -1,13 +1,34 @@
 from __future__ import annotations
 
 import json
-import sqlite3
+from dataclasses import dataclass
 from pathlib import Path
 
-from app.bootstrap.config import AppConfig
-from app.bootstrap.exceptions import WorkspaceInitializationError, WorkspaceValidationError
-from app.bootstrap.paths import WorkspacePaths, build_workspace_paths
-from app.domain.dto import WorkspaceContextDTO
+from app.bootstrap.config import AppConfig, WorkspaceConfig
+from app.bootstrap.paths import resolve_workspace_paths
+
+
+@dataclass(slots=True)
+class WorkspaceContext:
+    root_path: Path
+    notes_path: Path
+    references_path: Path
+    attachments_path: Path
+    exports_path: Path
+    agni_dir: Path
+    cache_path: Path
+    db_path: Path
+    state_path: Path
+    inbox_note_path: Path
+    created_paths: tuple[Path, ...]
+
+    @property
+    def workspace_root(self) -> Path:
+        return self.root_path
+
+    @property
+    def database_path(self) -> Path:
+        return self.db_path
 
 
 class WorkspaceService:
@@ -15,170 +36,120 @@ class WorkspaceService:
         self.config = config
 
     def validate_workspace(self, workspace_path: str | Path) -> dict[str, object]:
-        candidate = Path(workspace_path).expanduser()
-        if not str(candidate).strip():
-            raise WorkspaceValidationError("Workspace path cannot be empty.")
-        if candidate.exists() and candidate.is_file():
-            raise WorkspaceValidationError("Workspace path must be a directory, not a file.")
+        raw_path = str(workspace_path).strip()
+        if not raw_path:
+            return self._failure("Workspace path cannot be empty.")
 
-        resolved_path = candidate.resolve()
-        return {
-            "success": True,
-            "message": "Workspace path is valid.",
-            "data": {"workspace_path": resolved_path},
-        }
+        candidate = Path(raw_path).expanduser()
+        if candidate.exists() and candidate.is_file():
+            return self._failure("Workspace path must be a directory, not a file.")
+
+        return self._success(
+            "Workspace path is valid.",
+            workspace_path=candidate.resolve(),
+        )
 
     def ensure_workspace_structure(self, workspace_path: str | Path) -> dict[str, object]:
         validation_result = self.validate_workspace(workspace_path)
+        if not validation_result["success"]:
+            return validation_result
+
         resolved_path = validation_result["data"]["workspace_path"]
-        workspace_paths = build_workspace_paths(resolved_path, self.config)
+        workspace_config = resolve_workspace_paths(resolved_path)
+        created_paths = self._ensure_workspace_layout(workspace_config)
+        workspace_context = self.build_workspace_context(workspace_config, created_paths)
+
+        return self._success(
+            "Workspace structure is ready.",
+            workspace_context=workspace_context,
+            workspace_root=workspace_context.root_path,
+            created_paths=workspace_context.created_paths,
+        )
+
+    def initialize_workspace(self, workspace_path: str | Path) -> dict[str, object]:
+        structure_result = self.ensure_workspace_structure(workspace_path)
+        if not structure_result["success"]:
+            return structure_result
+
+        workspace_context = structure_result["data"]["workspace_context"]
+        return self._success(
+            "Workspace initialized successfully.",
+            workspace_context=workspace_context,
+            workspace_root=workspace_context.root_path,
+            created_paths=workspace_context.created_paths,
+        )
+
+    def build_workspace_context(
+        self, workspace_config: WorkspaceConfig, created_paths: tuple[Path, ...]
+    ) -> WorkspaceContext:
+        references_path = workspace_config.workspace_root / "references"
+        inbox_note_path = workspace_config.notes_dir / "Inbox.md"
+        return WorkspaceContext(
+            root_path=workspace_config.workspace_root,
+            notes_path=workspace_config.notes_dir,
+            references_path=references_path,
+            attachments_path=workspace_config.attachments_dir,
+            exports_path=workspace_config.exports_dir,
+            agni_dir=workspace_config.agni_dir,
+            cache_path=workspace_config.cache_dir,
+            db_path=workspace_config.db_path,
+            state_path=workspace_config.state_path,
+            inbox_note_path=inbox_note_path,
+            created_paths=created_paths,
+        )
+
+    def _ensure_workspace_layout(self, workspace_config: WorkspaceConfig) -> tuple[Path, ...]:
         created_paths: list[Path] = []
+        references_path = workspace_config.workspace_root / "references"
+        inbox_note_path = workspace_config.notes_dir / "Inbox.md"
 
         for directory in (
-            workspace_paths.root_path,
-            workspace_paths.agni_dir,
-            workspace_paths.notes_path,
-            workspace_paths.references_path,
-            workspace_paths.attachments_path,
-            workspace_paths.cache_path,
+            workspace_config.workspace_root,
+            workspace_config.notes_dir,
+            references_path,
+            workspace_config.attachments_dir,
+            workspace_config.exports_dir,
+            workspace_config.agni_dir,
+            workspace_config.cache_dir,
         ):
             if not directory.exists():
                 directory.mkdir(parents=True, exist_ok=True)
                 created_paths.append(directory)
 
-        if not workspace_paths.inbox_note_path.exists():
-            workspace_paths.inbox_note_path.write_text("", encoding="utf-8")
-            created_paths.append(workspace_paths.inbox_note_path)
-
-        if not workspace_paths.settings_path.exists():
-            settings_payload = {
-                "workspace_root": str(workspace_paths.root_path),
-                "notes_dir": "notes",
-                "references_dir": "references",
-                "attachments_dir": "attachments",
-                "cache_dir": "cache",
-            }
-            workspace_paths.settings_path.write_text(
-                json.dumps(settings_payload, ensure_ascii=False, indent=2),
+        if not workspace_config.state_path.exists():
+            workspace_config.state_path.write_text(
+                json.dumps(
+                    {
+                        "recent_notes": [],
+                        "last_opened_note_id": None,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
                 encoding="utf-8",
             )
-            created_paths.append(workspace_paths.settings_path)
+            created_paths.append(workspace_config.state_path)
 
-        database_was_missing = not workspace_paths.database_path.exists()
-        self._initialize_database(workspace_paths.database_path)
-        if database_was_missing and workspace_paths.database_path.exists():
-            created_paths.append(workspace_paths.database_path)
+        if not inbox_note_path.exists():
+            inbox_note_path.write_text("# Inbox\n\n", encoding="utf-8")
+            created_paths.append(inbox_note_path)
 
+        if not workspace_config.db_path.exists():
+            workspace_config.db_path.touch()
+            created_paths.append(workspace_config.db_path)
+
+        return tuple(created_paths)
+
+    def _success(self, message: str, **data: object) -> dict[str, object]:
         return {
             "success": True,
-            "message": "Workspace structure is ready.",
-            "data": {
-                "workspace_paths": workspace_paths,
-                "created_paths": tuple(created_paths),
-            },
+            "message": message,
+            "data": data,
         }
 
-    def initialize_workspace(self, workspace_path: str | Path) -> dict[str, object]:
-        structure_result = self.ensure_workspace_structure(workspace_path)
-        workspace_paths = structure_result["data"]["workspace_paths"]
-        created_paths = structure_result["data"]["created_paths"]
-        workspace_context = self.build_workspace_context(workspace_paths, created_paths)
-
+    def _failure(self, message: str, **data: object) -> dict[str, object]:
         return {
-            "success": True,
-            "message": "Workspace initialized successfully.",
-            "data": {"workspace_context": workspace_context},
+            "success": False,
+            "message": message,
+            "data": data,
         }
-
-    def build_workspace_context(
-        self, workspace_paths: WorkspacePaths, created_paths: tuple[Path, ...]
-    ) -> WorkspaceContextDTO:
-        return WorkspaceContextDTO(
-            root_path=workspace_paths.root_path,
-            agni_dir=workspace_paths.agni_dir,
-            database_path=workspace_paths.database_path,
-            settings_path=workspace_paths.settings_path,
-            notes_path=workspace_paths.notes_path,
-            references_path=workspace_paths.references_path,
-            attachments_path=workspace_paths.attachments_path,
-            cache_path=workspace_paths.cache_path,
-            inbox_note_path=workspace_paths.inbox_note_path,
-            created_paths=created_paths,
-        )
-
-    def _initialize_database(self, database_path: Path) -> None:
-        if self._database_is_bootstrapped(database_path):
-            return
-
-        bootstrap_error: sqlite3.Error | None = None
-        try:
-            with sqlite3.connect(database_path) as connection:
-                connection.execute("PRAGMA journal_mode=WAL;")
-                connection.execute("PRAGMA foreign_keys=ON;")
-                connection.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS app_metadata (
-                        key TEXT PRIMARY KEY,
-                        value TEXT NOT NULL
-                    )
-                    """
-                )
-                connection.execute(
-                    """
-                    INSERT OR REPLACE INTO app_metadata(key, value)
-                    VALUES ('workspace_version', '1')
-                    """
-                )
-                connection.commit()
-        except sqlite3.Error as error:
-            bootstrap_error = error
-
-        if not self._database_is_bootstrapped(database_path):
-            try:
-                self._write_serialized_bootstrap_database(database_path)
-            except sqlite3.Error as fallback_error:
-                error_message = (
-                    f"Failed to initialize workspace database: {bootstrap_error}"
-                    if bootstrap_error is not None
-                    else "Failed to initialize workspace database."
-                )
-                raise WorkspaceInitializationError(error_message) from fallback_error
-
-        if not database_path.exists():
-            raise WorkspaceInitializationError("Workspace database was not created.")
-
-    def _database_is_bootstrapped(self, database_path: Path) -> bool:
-        if not database_path.exists() or database_path.stat().st_size == 0:
-            return False
-
-        try:
-            with sqlite3.connect(f"file:{database_path}?mode=ro", uri=True) as connection:
-                row = connection.execute(
-                    "SELECT value FROM app_metadata WHERE key = 'workspace_version'"
-                ).fetchone()
-        except sqlite3.Error:
-            return False
-
-        return row == ("1",)
-
-    def _write_serialized_bootstrap_database(self, database_path: Path) -> None:
-        connection = sqlite3.connect(":memory:")
-        try:
-            connection.execute(
-                """
-                CREATE TABLE app_metadata (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                )
-                """
-            )
-            connection.execute(
-                """
-                INSERT INTO app_metadata(key, value)
-                VALUES ('workspace_version', '1')
-                """
-            )
-            connection.commit()
-            database_path.write_bytes(connection.serialize())
-        finally:
-            connection.close()
