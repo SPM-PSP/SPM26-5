@@ -35,6 +35,18 @@ from PySide6.QtWidgets import (
 from app.editor.markdown_document import MarkdownDocument
 
 
+EDITOR_FONT_FAMILY = "Microsoft YaHei UI"
+EDITOR_FONT_FALLBACK = '"Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif'
+EDITOR_HTML_FONT_RULE = f"font-family: {EDITOR_FONT_FALLBACK};"
+EDITOR_FONT_POINT_SIZE = 11
+EDITOR_TEXT_COLOR = "#dbe9ff"
+EDITOR_CONTENT_PADDING_X = 24
+EDITOR_CONTENT_PADDING_Y = 18
+EDITOR_LINE_PADDING_Y = 3
+EDITOR_LINE_HEIGHT = 1.32
+EDITOR_MIN_LINE_HEIGHT = 28
+
+
 class LinePreviewBrowser(QTextBrowser):
     """支持点击行的预览控件。"""
 
@@ -62,17 +74,23 @@ class FloatingLineEditor(QPlainTextEdit):
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         self.setTabChangesFocus(False)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.document().setDocumentMargin(0)
+        text_option = self.document().defaultTextOption()
+        text_option.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        self.document().setDefaultTextOption(text_option)
+        self.setContentsMargins(0, 0, 0, 0)
+        self.setViewportMargins(0, 0, 0, 0)
 
         self.setStyleSheet("""
             QPlainTextEdit {
                 background-color: #071a2f;
-                color: #f4f8ff;
+                color: #dbe9ff;
                 border: none;
-                border-radius: 6px;
-                padding: 4px 8px;
+                border-radius: 0;
+                padding: 3px 0;
                 selection-background-color: #1f5d99;
                 selection-color: #ffffff;
             }
@@ -197,9 +215,17 @@ class NoteEditorWidget(QWidget):
         self.preview.setReadOnly(True)
         self.preview.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-        preview_font = QFont()
-        preview_font.setPointSize(11)
+        preview_font = QFont(EDITOR_FONT_FAMILY)
+        preview_font.setPointSize(EDITOR_FONT_POINT_SIZE)
         self.preview.setFont(preview_font)
+        self.preview.document().setDefaultFont(preview_font)
+        self.preview.document().setDocumentMargin(0)
+        self.preview.setViewportMargins(
+            EDITOR_CONTENT_PADDING_X,
+            EDITOR_CONTENT_PADDING_Y,
+            EDITOR_CONTENT_PADDING_X,
+            EDITOR_CONTENT_PADDING_Y,
+        )
 
         self.preview.setStyleSheet("""
             QTextBrowser {
@@ -207,14 +233,16 @@ class NoteEditorWidget(QWidget):
                 color: #eaf2ff;
                 border: 1px solid #1f5d99;
                 border-radius: 8px;
-                padding: 6px;
+                padding: 0;
             }
         """)
 
         self.line_editor = FloatingLineEditor(self.preview.viewport())
-        editor_font = QFont()
-        editor_font.setPointSize(11)
+        editor_font = QFont(EDITOR_FONT_FAMILY)
+        editor_font.setPointSize(EDITOR_FONT_POINT_SIZE)
+        editor_font.setWeight(QFont.Weight.Normal)
         self.line_editor.setFont(editor_font)
+        self.line_editor.document().setDefaultFont(editor_font)
         self.line_editor.hide()
 
         layout.addLayout(header_layout)
@@ -240,6 +268,20 @@ class NoteEditorWidget(QWidget):
         self.save_action.triggered.connect(self.request_save)
         self.addAction(self.save_action)
 
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._apply_editor_fonts()
+        self._overlay_refresh_timer.start()
+
+    def _apply_editor_fonts(self) -> None:
+        editor_font = QFont(EDITOR_FONT_FAMILY)
+        editor_font.setPointSize(EDITOR_FONT_POINT_SIZE)
+
+        self.preview.setFont(editor_font)
+        self.preview.document().setDefaultFont(editor_font)
+        self.line_editor.setFont(editor_font)
+        self.line_editor.document().setDefaultFont(editor_font)
+
     # ------------------------------------------------------------------
     # 渲染
     # ------------------------------------------------------------------
@@ -262,7 +304,8 @@ class NoteEditorWidget(QWidget):
         body_parts = []
         for i, line in enumerate(lines):
             if i == editing_line_index:
-                body_parts.append('<div class="agni-line editing-line">&nbsp;</div>')
+                placeholder = self._render_editing_line_placeholder(line)
+                body_parts.append(f'<div class="agni-line editing-line">{placeholder}</div>')
             else:
                 body_parts.append(self._render_line_to_html(line))
 
@@ -271,27 +314,32 @@ class NoteEditorWidget(QWidget):
         <head>
         <style>
             body {{
-                font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
-                font-size: 11pt;
-                line-height: 1.75;
-                padding: 12px 14px;
+                {EDITOR_HTML_FONT_RULE}
+                font-size: {EDITOR_FONT_POINT_SIZE}pt;
+                line-height: {EDITOR_LINE_HEIGHT};
+                padding: 0;
                 margin: 0;
-                color: #eaf2ff;
+                color: {EDITOR_TEXT_COLOR};
                 background: #071a2f;
+                text-align: left;
             }}
             .agni-line {{
-                min-height: 30px;
+                min-height: {EDITOR_MIN_LINE_HEIGHT}px;
                 margin: 0;
-                padding: 4px 0;
+                padding: {EDITOR_LINE_PADDING_Y}px 0;
                 white-space: pre-wrap;
                 word-wrap: break-word;
-                color: #eaf2ff;
+                color: {EDITOR_TEXT_COLOR};
+                text-align: left;
             }}
             .editing-line {{
-            background: #071a2f;
-            border: none;
-            border-radius: 6px;
-}}
+                background: #071a2f;
+                border: none;
+                border-radius: 0;
+            }}
+            .editing-line-placeholder {{
+                visibility: hidden;
+            }}
             h1, h2, h3, h4, h5, h6 {{
                 margin: 8px 0 6px 0;
                 font-weight: 700;
@@ -306,7 +354,7 @@ class NoteEditorWidget(QWidget):
 
             p {{
                 margin: 0;
-                color: #dbe9ff;
+                color: {EDITOR_TEXT_COLOR};
             }}
             
             .agni-hr {{
@@ -317,7 +365,7 @@ class NoteEditorWidget(QWidget):
 
             .list-item {{
                 margin-left: 18px;
-                color: #dbe9ff;
+                color: {EDITOR_TEXT_COLOR};
             }}
 
             .blockquote {{
@@ -356,7 +404,7 @@ class NoteEditorWidget(QWidget):
             }}
 
             em {{
-                color: #dbe9ff;
+                color: {EDITOR_TEXT_COLOR};
                 font-style: italic;
             }}
         </style>
@@ -366,6 +414,12 @@ class NoteEditorWidget(QWidget):
         </body>
         </html>
         """
+
+    def _render_editing_line_placeholder(self, line: str) -> str:
+        if line == "":
+            return '<span class="editing-line-placeholder">&nbsp;</span>'
+
+        return f'<span class="editing-line-placeholder">{html.escape(line)}</span>'
 
     def _render_line_to_html(self, line: str) -> str:
         stripped = line.rstrip()
@@ -445,15 +499,24 @@ class NoteEditorWidget(QWidget):
             self.line_editor.hide()
             return
 
+        self._apply_editor_fonts()
+
         cursor = QTextCursor(block)
         rect = self.preview.cursorRect(cursor)
+        block_rect = self.preview.document().documentLayout().blockBoundingRect(block)
 
         viewport_rect = self.preview.viewport().rect()
-        x = 8
+        x = max(0, rect.left())
         y = rect.top()
-        width = max(120, viewport_rect.width() - 16)
+        width = max(120, viewport_rect.width() - x)
 
-        line_height = max(40, self.line_editor.fontMetrics().height() + 18)
+        editor_doc_height = int(self.line_editor.document().size().height())
+        line_height = max(
+            EDITOR_MIN_LINE_HEIGHT,
+            int(block_rect.height()),
+            editor_doc_height,
+            self.line_editor.fontMetrics().height() + (EDITOR_LINE_PADDING_Y * 2),
+        )
         self.line_editor.setGeometry(QRect(x, y, width, line_height))
         self.line_editor.show()
         self.line_editor.raise_()
@@ -464,6 +527,7 @@ class NoteEditorWidget(QWidget):
 
         self.line_editor.blockSignals(True)
         self.line_editor.setPlainText(self._lines[self._current_line_index])
+        self._apply_editor_fonts()
         self.line_editor.blockSignals(False)
 
         cursor = self.line_editor.textCursor()
@@ -496,7 +560,7 @@ class NoteEditorWidget(QWidget):
         self.document_changed.emit(self._document)
         self.status_changed.emit(self._document.session_status)
 
-        self._refresh_preview()
+        self._overlay_refresh_timer.start()
 
     def _on_line_editor_cursor_changed(self) -> None:
         cursor = self.line_editor.textCursor()
