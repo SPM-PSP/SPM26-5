@@ -51,6 +51,7 @@ class CitationService:
         manifest = self._load_citations_manifest(workspace_context.agni_dir)
         manifest["citations"].append(citation)
         self._save_citations_manifest(workspace_context.agni_dir, manifest)
+        self._sync_citation_record(workspace_context, citation)
 
         return self._success(
             "Citation captured successfully.",
@@ -101,6 +102,7 @@ class CitationService:
             manifest = self._load_citations_manifest(workspace_context.agni_dir)
             manifest["citations"].append(citation)
             self._save_citations_manifest(workspace_context.agni_dir, manifest)
+            self._sync_citation_record(workspace_context, citation)
         else:
             citation["note_path"] = insert_result["data"]["note"]["file_path"]
             self._update_citation_note_path(workspace_root, citation["citation_id"], citation["note_path"])
@@ -267,6 +269,17 @@ class CitationService:
                 item["note_path"] = note_path
                 break
         self._save_citations_manifest(workspace_context.agni_dir, manifest)
+        if note_path is not None:
+            with self.workspace_service.connect_workspace_database(workspace_context) as connection:
+                connection.execute(
+                    """
+                    UPDATE citations_catalog
+                    SET note_path = ?
+                    WHERE citation_id = ?
+                    """,
+                    (note_path, citation_id),
+                )
+                connection.commit()
 
     def _success(self, message: str, **data: object) -> dict[str, object]:
         return {
@@ -274,3 +287,32 @@ class CitationService:
             "message": message,
             "data": data,
         }
+
+    def _sync_citation_record(self, workspace_context, citation: dict[str, object]) -> None:
+        with self.workspace_service.connect_workspace_database(workspace_context) as connection:
+            connection.execute(
+                """
+                INSERT INTO citations_catalog(
+                    citation_id, reference_id, annotation_id, token,
+                    page_label, note_path, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(citation_id) DO UPDATE SET
+                    reference_id = excluded.reference_id,
+                    annotation_id = excluded.annotation_id,
+                    token = excluded.token,
+                    page_label = excluded.page_label,
+                    note_path = excluded.note_path,
+                    created_at = excluded.created_at
+                """,
+                (
+                    citation.get("citation_id"),
+                    citation.get("reference_id"),
+                    citation.get("annotation_id"),
+                    citation.get("token"),
+                    citation.get("page_label"),
+                    citation.get("note_path"),
+                    citation.get("created_at"),
+                ),
+            )
+            connection.commit()

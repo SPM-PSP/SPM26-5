@@ -100,6 +100,7 @@ class PdfService:
         }
         manifest["annotations"].append(annotation)
         self._save_annotations_manifest(workspace_context.agni_dir, manifest)
+        self._sync_annotation_record(workspace_context, annotation)
 
         return self._success(
             "PDF annotation captured successfully.",
@@ -194,3 +195,38 @@ class PdfService:
             "message": message,
             "data": data,
         }
+
+    def _sync_annotation_record(self, workspace_context, annotation: dict[str, object]) -> None:
+        with self.workspace_service.connect_workspace_database(workspace_context) as connection:
+            connection.execute(
+                """
+                INSERT INTO pdf_annotations(
+                    annotation_id, reference_id, pdf_path, text, page_number,
+                    page_label, rects_json, comment, color, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(annotation_id) DO UPDATE SET
+                    reference_id = excluded.reference_id,
+                    pdf_path = excluded.pdf_path,
+                    text = excluded.text,
+                    page_number = excluded.page_number,
+                    page_label = excluded.page_label,
+                    rects_json = excluded.rects_json,
+                    comment = excluded.comment,
+                    color = excluded.color,
+                    created_at = excluded.created_at
+                """,
+                (
+                    annotation.get("annotation_id"),
+                    annotation.get("reference_id"),
+                    annotation.get("pdf_path"),
+                    annotation.get("text"),
+                    annotation.get("page_number"),
+                    annotation.get("page_label"),
+                    json.dumps(annotation.get("rects", []), ensure_ascii=False),
+                    annotation.get("comment"),
+                    annotation.get("color"),
+                    annotation.get("created_at"),
+                ),
+            )
+            connection.commit()

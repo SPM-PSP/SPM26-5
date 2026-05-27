@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,8 @@ class NoteService:
             note_path.write_text(content, encoding="utf-8")
         except OSError as error:
             return self._failure(f"Failed to create note: {error}")
+
+        self._sync_note_record(workspace_context, note_path, content, note_title)
 
         return self._success(
             "Note created successfully.",
@@ -100,6 +103,10 @@ class NoteService:
         except OSError as error:
             return self._failure(f"Failed to save note: {error}")
 
+        self._sync_note_record(workspace_context, target_path, content, title)
+        if renamed:
+            self._delete_note_record(workspace_context, current_path.stem)
+
         version = int(note_payload.get("version") or 0) + 1
         return self._success(
             "Note saved successfully.",
@@ -132,6 +139,8 @@ class NoteService:
         except OSError as error:
             return self._failure(f"Failed to delete note: {error}")
 
+        self._delete_note_record(workspace_context, resolved_note.stem)
+
         return self._success(
             "Note deleted successfully.",
             note={
@@ -148,6 +157,7 @@ class NoteService:
 
         workspace_context = workspace_result["data"]["workspace_context"]
         notes = []
+        planets_by_note_id = self._load_note_planets(workspace_context)
         for note_path in sorted(workspace_context.notes_path.rglob("*.md"), key=lambda item: item.name.lower()):
             try:
                 content = note_path.read_text(encoding="utf-8")
@@ -159,6 +169,7 @@ class NoteService:
                     "title": self._derive_title(content, note_path),
                     "file_path": str(note_path),
                     "relative_path": str(note_path.relative_to(workspace_context.notes_path)),
+                    "planet": planets_by_note_id.get(note_path.stem),
                 }
             )
 
@@ -267,4 +278,148 @@ class NoteService:
             "success": False,
             "message": message,
             "data": data,
+        }
+
+    def _sync_note_record(
+        self,
+        workspace_context,
+        note_path: Path,
+        content: str,
+        title: str,
+    ) -> None:
+        relative_path = str(note_path.relative_to(workspace_context.notes_path))
+        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        links = self._extract_note_links(content)
+
+        with self.workspace_service.connect_workspace_database(workspace_context) as connection:
+            existing_planet_row = connection.execute(
+                """
+                SELECT planet
+                FROM object_planets
+                WHERE object_kind = 'note' AND object_key = ?
+                """,
+                (note_path.stem,),
+            ).fetchone()
+            planet = (
+                str(existing_planet_row["planet"])
+                if existing_planet_row is not None and existing_planet_row["planet"] is not None
+                else self._infer_planet_from_path(note_path)
+            )
+
+            connection.execute(
+                """
+                INSERT INTO notes(note_id, relative_path, title, content, planet, content_hash, updated_at, file_mtime)
+                VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?)
+                ON CONFLICT(note_id) DO UPDATE SET
+                    relative_path = excluded.relative_path,
+                    title = excluded.title,
+                    content = excluded.content,
+                    planet = excluded.planet,
+                    content_hash = excluded.content_hash,
+                    updated_at = excluded.updated_at,
+                    file_mtime = excluded.file_mtime
+                """,
+                (
+                    note_path.stem,
+                    relative_path,
+                    title,
+                    content,
+                    planet,
+                    content_hash,
+                    note_path.stat().st_mtime,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO object_planets(object_kind, object_key, planet, updated_at)
+                VALUES ('note', ?, ?, datetime('now'))
+                ON CONFLICT(object_kind, object_key) DO UPDATE SET
+                    planet = excluded.planet,
+                    updated_at = excluded.updated_at
+                """,
+                (note_path.stem, planet),
+            )
+            connection.execute(
+                "DELETE FROM notes_fts WHERE note_id = ?",
+                (note_path.stem,),
+            )
+            connection.execute(
+                """
+                INSERT INTO notes_fts(note_id, relative_path, title, content)
+                VALUES (?, ?, ?, ?)
+                """,
+                (note_path.stem, relative_path, title, content),
+            )
+            connection.execute(
+                "DELETE FROM note_links WHERE source_note_id = ?",
+                (note_path.stem,),
+            )
+            if links:
+                connection.executemany(
+                    """
+                    INSERT INTO note_links(source_note_id, target_title, target_heading, alias, raw_link)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            note_path.stem,
+                            link["target_title"],
+                            link["target_heading"],
+                            link["alias"],
+                            link["raw"],
+                        )
+                        for link in links
+                    ],
+                )
+            connection.commit()
+
+    def _delete_note_record(self, workspace_context, note_id: str) -> None:
+        with self.workspace_service.connect_workspace_database(workspace_context) as connection:
+            connection.execute("DELETE FROM notes WHERE note_id = ?", (note_id,))
+            connection.execute("DELETE FROM notes_fts WHERE note_id = ?", (note_id,))
+            connection.execute(
+                "DELETE FROM object_planets WHERE object_kind = 'note' AND object_key = ?",
+                (note_id,),
+            )
+            connection.commit()
+
+    def _extract_note_links(self, content: str) -> list[dict[str, str | None]]:
+        links: list[dict[str, str | None]] = []
+        pattern = re.compile(
+            r"\[\[(?P<title>[^\]#|]+?)(?:#(?P<heading>[^\]|]+))?(?:\|(?P<alias>[^\]]+))?\]\]"
+        )
+        for match in pattern.finditer(content):
+            links.append(
+                {
+                    "raw": match.group(0),
+                    "target_title": match.group("title").strip(),
+                    "target_heading": match.group("heading").strip() if match.group("heading") else None,
+                    "alias": match.group("alias").strip() if match.group("alias") else None,
+                }
+            )
+        return links
+
+    def _infer_planet_from_path(self, note_path: Path) -> str:
+        lowered = str(note_path).casefold()
+        if "inbox" in lowered:
+            return "Inbox"
+        if "reading" in lowered or "paper" in lowered or "pdf" in lowered:
+            return "Reading"
+        if "research" in lowered or "project" in lowered:
+            return "Research"
+        return "Unassigned"
+
+    def _load_note_planets(self, workspace_context) -> dict[str, str]:
+        with self.workspace_service.connect_workspace_database(workspace_context) as connection:
+            rows = connection.execute(
+                """
+                SELECT object_key, planet
+                FROM object_planets
+                WHERE object_kind = 'note'
+                """
+            ).fetchall()
+        return {
+            str(row["object_key"]): str(row["planet"])
+            for row in rows
+            if row["planet"] is not None
         }

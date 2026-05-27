@@ -45,6 +45,7 @@ class ReferenceService:
 
         manifest["references"].append(record)
         self._save_manifest(workspace_context.agni_dir, manifest)
+        self._sync_reference_record(workspace_context, record)
         return self._success("Reference created successfully.", reference=record)
 
     def list_references(self, workspace_root: str | Path) -> dict[str, object]:
@@ -97,6 +98,7 @@ class ReferenceService:
         record["pdf_path"] = str(stored_pdf_path)
         record["updated_at"] = datetime.now().isoformat()
         self._save_manifest(workspace_context.agni_dir, manifest)
+        self._sync_reference_record(workspace_context, record)
         return self._success("PDF bound successfully.", reference=record)
 
     def import_reference_file(self, workspace_root: str | Path, import_path: str | Path) -> dict[str, object]:
@@ -140,6 +142,7 @@ class ReferenceService:
             }
             manifest["references"].append(record)
             created.append(record)
+            self._sync_reference_record(workspace_context, record)
 
         self._save_manifest(workspace_context.agni_dir, manifest)
         return self._success(
@@ -260,3 +263,46 @@ class ReferenceService:
             "message": message,
             "data": data,
         }
+
+    def _sync_reference_record(self, workspace_context, record: dict[str, object]) -> None:
+        with self.workspace_service.connect_workspace_database(workspace_context) as connection:
+            connection.execute(
+                """
+                INSERT INTO references_catalog(
+                    reference_id, title, authors_json, year, entry_type,
+                    source_format, source_path, pdf_path, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(reference_id) DO UPDATE SET
+                    title = excluded.title,
+                    authors_json = excluded.authors_json,
+                    year = excluded.year,
+                    entry_type = excluded.entry_type,
+                    source_format = excluded.source_format,
+                    source_path = excluded.source_path,
+                    pdf_path = excluded.pdf_path,
+                    created_at = excluded.created_at,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    record.get("reference_id"),
+                    record.get("title"),
+                    json.dumps(list(record.get("authors", ()))),
+                    record.get("year"),
+                    record.get("entry_type"),
+                    record.get("source_format"),
+                    record.get("source_path"),
+                    record.get("pdf_path"),
+                    record.get("created_at"),
+                    record.get("updated_at"),
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO object_planets(object_kind, object_key, planet, updated_at)
+                VALUES ('reference', ?, 'Reading', datetime('now'))
+                ON CONFLICT(object_kind, object_key) DO NOTHING
+                """,
+                (record.get("reference_id"),),
+            )
+            connection.commit()

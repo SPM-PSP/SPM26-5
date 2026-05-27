@@ -20,7 +20,8 @@ class LinkService:
         if not workspace_result["success"]:
             return workspace_result
 
-        notes_dir = workspace_result["data"]["workspace_context"].notes_path
+        workspace_context = workspace_result["data"]["workspace_context"]
+        notes_dir = workspace_context.notes_path
         resolved_note = self._resolve_note_path(notes_dir, note_path)
         if resolved_note is None:
             return self._failure("Note path must point to a Markdown file inside workspace/notes.")
@@ -32,7 +33,30 @@ class LinkService:
         except OSError as error:
             return self._failure(f"Failed to read note links: {error}")
 
-        links = tuple(self._parse_wikilinks(text))
+        note_id = resolved_note.stem
+        with self.workspace_service.connect_workspace_database(workspace_context) as connection:
+            rows = connection.execute(
+                """
+                SELECT raw_link, target_title, target_heading, alias
+                FROM note_links
+                WHERE source_note_id = ?
+                ORDER BY id ASC
+                """,
+                (note_id,),
+            ).fetchall()
+        links = (
+            tuple(
+                {
+                    "raw": str(row["raw_link"]),
+                    "target_title": str(row["target_title"]),
+                    "target_heading": str(row["target_heading"]) if row["target_heading"] is not None else None,
+                    "alias": str(row["alias"]) if row["alias"] is not None else None,
+                }
+                for row in rows
+            )
+            if rows
+            else tuple(self._parse_wikilinks(text))
+        )
         return self._success(
             "Note links listed successfully.",
             note={
@@ -62,31 +86,50 @@ class LinkService:
         )
 
         backlinks: list[dict[str, object]] = []
-        for note_path in sorted(notes_dir.rglob("*.md"), key=lambda item: item.name.lower()):
-            if current_path is not None and note_path.resolve() == current_path.resolve():
-                continue
+        with self.workspace_service.connect_workspace_database(workspace_context) as connection:
+            note_rows = connection.execute(
+                """
+                SELECT notes.note_id, notes.relative_path, notes.title, notes.content
+                FROM note_links
+                JOIN notes ON notes.note_id = note_links.source_note_id
+                WHERE lower(trim(note_links.target_title)) = ?
+                GROUP BY notes.note_id, notes.relative_path, notes.title, notes.content
+                ORDER BY notes.title COLLATE NOCASE ASC
+                """,
+                (normalized_title,),
+            ).fetchall()
 
-            try:
-                text = note_path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
-                continue
-
-            matched_links = [
-                link
-                for link in self._parse_wikilinks(text)
-                if self._normalize_title(str(link["target_title"])) == normalized_title
-            ]
-            if not matched_links:
-                continue
-
-            backlinks.append(
-                {
-                    "source_title": self._derive_note_title(text, note_path),
-                    "file_path": str(note_path),
-                    "context": self._build_backlink_context(text, matched_links),
-                    "matched_links": tuple(matched_links),
-                }
-            )
+            for note_row in note_rows:
+                note_path = notes_dir / str(note_row["relative_path"])
+                if current_path is not None and note_path.resolve() == current_path.resolve():
+                    continue
+                link_rows = connection.execute(
+                    """
+                    SELECT raw_link, target_title, target_heading, alias
+                    FROM note_links
+                    WHERE source_note_id = ?
+                      AND lower(trim(target_title)) = ?
+                    ORDER BY id ASC
+                    """,
+                    (str(note_row["note_id"]), normalized_title),
+                ).fetchall()
+                matched_links = tuple(
+                    {
+                        "raw": str(row["raw_link"]),
+                        "target_title": str(row["target_title"]),
+                        "target_heading": str(row["target_heading"]) if row["target_heading"] is not None else None,
+                        "alias": str(row["alias"]) if row["alias"] is not None else None,
+                    }
+                    for row in link_rows
+                )
+                backlinks.append(
+                    {
+                        "source_title": str(note_row["title"] or note_path.stem),
+                        "file_path": str(note_path),
+                        "context": self._build_backlink_context(str(note_row["content"] or ""), list(matched_links)),
+                        "matched_links": matched_links,
+                    }
+                )
 
         return self._success(
             "Backlinks listed successfully.",

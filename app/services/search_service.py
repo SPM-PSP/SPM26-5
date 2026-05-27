@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 from app.services.workspace_service import WorkspaceService
@@ -18,8 +19,47 @@ class SearchService:
         if not normalized_query:
             return self._success("Search query is empty.", results=tuple())
 
-        notes_dir = workspace_result["data"]["workspace_context"].notes_path
-        lowered_query = normalized_query.casefold()
+        workspace_context = workspace_result["data"]["workspace_context"]
+        try:
+            results = self._search_notes_by_fts(workspace_context, normalized_query)
+        except sqlite3.OperationalError:
+            results = self._search_notes_by_scan(workspace_context.notes_path, normalized_query)
+
+        return self._success(
+            "Search completed successfully.",
+            query=normalized_query,
+            results=tuple(results),
+        )
+
+    def _search_notes_by_fts(self, workspace_context, query: str) -> list[dict[str, object]]:
+        with self.workspace_service.connect_workspace_database(workspace_context) as connection:
+            rows = connection.execute(
+                """
+                SELECT notes.note_id, notes.relative_path, notes.title, notes.content
+                FROM notes_fts
+                JOIN notes ON notes.note_id = notes_fts.note_id
+                WHERE notes_fts MATCH ?
+                ORDER BY rank
+                """,
+                (query,),
+            ).fetchall()
+
+        results: list[dict[str, object]] = []
+        for row in rows:
+            note_path = workspace_context.notes_path / str(row["relative_path"])
+            content = str(row["content"] or "")
+            results.append(
+                {
+                    "title": str(row["title"] or note_path.stem),
+                    "file_path": str(note_path),
+                    "relative_path": str(row["relative_path"]),
+                    "context": self._build_context(content, query),
+                }
+            )
+        return results
+
+    def _search_notes_by_scan(self, notes_dir: Path, query: str) -> list[dict[str, object]]:
+        lowered_query = query.casefold()
         results: list[dict[str, object]] = []
 
         for note_path in sorted(notes_dir.rglob("*.md"), key=lambda item: item.name.lower()):
@@ -38,15 +78,11 @@ class SearchService:
                     "title": title,
                     "file_path": str(note_path),
                     "relative_path": str(note_path.relative_to(notes_dir)),
-                    "context": self._build_context(text, normalized_query),
+                    "context": self._build_context(text, query),
                 }
             )
 
-        return self._success(
-            "Search completed successfully.",
-            query=normalized_query,
-            results=tuple(results),
-        )
+        return results
 
     def _derive_title(self, text: str, note_path: Path) -> str:
         for line in text.splitlines():

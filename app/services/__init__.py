@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .citation_service import CitationService
+    from .knowledge_model_service import KnowledgeModelService
     from .link_service import LinkService
     from .note_service import NoteService
     from .pdf_service import PdfService
@@ -13,6 +14,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CitationService",
+    "KnowledgeModelService",
     "LinkService",
     "NoteService",
     "PdfService",
@@ -27,6 +29,10 @@ def __getattr__(name: str) -> Any:
         from .citation_service import CitationService
 
         return CitationService
+    if name == "KnowledgeModelService":
+        from .knowledge_model_service import KnowledgeModelService
+
+        return KnowledgeModelService
     if name == "LinkService":
         from .link_service import LinkService
 

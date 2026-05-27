@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .app_controller import AppController
     from .citation_controller import CitationController
+    from .knowledge_controller import KnowledgeController
     from .note_controller import NoteController
     from .pdf_controller import PdfController
     from .reference_controller import ReferenceController
@@ -14,6 +15,7 @@ if TYPE_CHECKING:
 __all__ = [
     "AppController",
     "CitationController",
+    "KnowledgeController",
     "NoteController",
     "PdfController",
     "ReferenceController",
@@ -31,6 +33,10 @@ def __getattr__(name: str) -> Any:
         from .citation_controller import CitationController
 
         return CitationController
+    if name == "KnowledgeController":
+        from .knowledge_controller import KnowledgeController
+
+        return KnowledgeController
     if name == "NoteController":
         from .note_controller import NoteController
 
