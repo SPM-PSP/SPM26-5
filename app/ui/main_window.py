@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.bootstrap.startup import bootstrap_workspace
 from app.ui.actions import AgniActionSet, build_app_stylesheet
 from app.ui.dialogs.command_palette_dialog import CommandPaletteDialog
 from app.ui.dialogs.workspace_picker_dialog import WorkspacePickerDialog
@@ -35,7 +36,6 @@ class MainWindow(QMainWindow):
         self.current_note_path: Path | None = None
 
         self.setObjectName("agni_main_window")
-        self.setWindowTitle(f"Agni - {self.workspace_root.name}")
         self.resize(1360, 820)
         self.setMinimumSize(1080, 680)
         self.setDockOptions(
@@ -46,34 +46,31 @@ class MainWindow(QMainWindow):
 
         self.actions = AgniActionSet.build(self)
         self.workspace_tabs = QTabWidget(self)
-        self.editor = NoteEditorWidget(self)
+        self.workspace_tabs.setObjectName("workspace_tabs")
+        self.workspace_tabs.setTabsClosable(True)
+        self.workspace_tabs.setMovable(True)
+
         self.note_dock = NoteListDock(self)
         self.search_dock = SearchDock(self)
         self.outline_dock = OutlineDock(self)
         self.workspace_label = QLabel(self)
-        self.status_label = QLabel("就绪", self)
+        self.status_label = QLabel("Ready", self)
 
         self._build_ui()
         self._bind_signals()
         self._install_app_shortcut_filter()
-        self._load_workspace()
-        self._open_initial_note()
+        self._apply_workspace_context(app_context)
 
     def _build_ui(self) -> None:
         self.setStyleSheet(build_app_stylesheet())
-        self.workspace_tabs.setObjectName("workspace_tabs")
-        self.workspace_tabs.setTabsClosable(True)
-        self.workspace_tabs.setMovable(True)
-        self.workspace_tabs.addTab(self.editor, "未命名")
         self.setCentralWidget(self.workspace_tabs)
-
         self._build_menu_bar()
         self._build_toolbar()
         self._build_docks()
         self._build_status_bar()
 
     def _build_menu_bar(self) -> None:
-        file_menu = self.menuBar().addMenu("文件")
+        file_menu = self.menuBar().addMenu("File")
         file_menu.addAction(self.actions.new_note)
         file_menu.addAction(self.actions.open_workspace)
         file_menu.addAction(self.actions.save_note)
@@ -81,20 +78,20 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(self.actions.refresh_workspace)
 
-        view_menu = self.menuBar().addMenu("视图")
+        view_menu = self.menuBar().addMenu("View")
         view_menu.addAction(self.actions.toggle_notes)
         view_menu.addAction(self.actions.toggle_search)
         view_menu.addAction(self.actions.toggle_outline)
 
-        tools_menu = self.menuBar().addMenu("工具")
+        tools_menu = self.menuBar().addMenu("Tools")
         tools_menu.addAction(self.actions.command_palette)
         tools_menu.addAction(self.actions.focus_search)
 
-        help_menu = self.menuBar().addMenu("帮助")
+        help_menu = self.menuBar().addMenu("Help")
         help_menu.addAction(self.actions.about)
 
     def _build_toolbar(self) -> None:
-        toolbar = QToolBar("主工具栏", self)
+        toolbar = QToolBar("Main Toolbar", self)
         toolbar.setObjectName("main_toolbar")
         toolbar.setMovable(False)
         toolbar.addAction(self.actions.new_note)
@@ -118,7 +115,6 @@ class MainWindow(QMainWindow):
         self.resizeDocks([self.search_dock, self.outline_dock], [340, 340], Qt.Orientation.Horizontal)
 
     def _build_status_bar(self) -> None:
-        self.workspace_label.setText(f"工作区: {self.workspace_root}")
         self.statusBar().addWidget(self.workspace_label, 1)
         self.statusBar().addPermanentWidget(self.status_label)
 
@@ -143,21 +139,51 @@ class MainWindow(QMainWindow):
         self.note_dock.delete_note_requested.connect(self.delete_note)
         self.note_dock.reference_selected.connect(self.open_pdf_placeholder)
         self.note_dock.knowledge_selected.connect(self.open_knowledge_object)
-        self.note_dock.assign_to_planet_requested.connect(self.show_planet_assignment_placeholder)
+        self.note_dock.assign_to_planet_requested.connect(self.assign_object_to_planet)
         self.note_dock.new_note_requested.connect(self.create_new_note)
         self.note_dock.refresh_requested.connect(self.refresh_workspace)
+
         self.search_dock.result_selected.connect(self.open_note)
         self.outline_dock.heading_selected.connect(self.goto_line)
         self.outline_dock.pdf_selected.connect(self.open_pdf_placeholder)
 
         self.workspace_tabs.currentChanged.connect(self._on_tab_changed)
         self.workspace_tabs.tabCloseRequested.connect(self._close_tab)
-        self._connect_editor(self.editor)
 
     def _install_app_shortcut_filter(self) -> None:
         app = QApplication.instance()
         if app is not None:
             app.installEventFilter(self)
+
+    def _apply_workspace_context(self, app_context) -> None:
+        self.app_context = app_context
+        self.workspace_root = Path(app_context.workspace_root)
+        self.notes_dir = self.workspace_root / "notes"
+        self.current_note_path = None
+
+        self.setWindowTitle(f"Agni - {self.workspace_root.name}")
+        self.workspace_label.setText(f"Workspace: {self.workspace_root}")
+        self.status_label.setText("Workspace loaded")
+
+        self.note_dock.bind_app_context(app_context)
+        self.search_dock.bind_app_context(app_context)
+        self.note_dock.set_workspace(self.workspace_root)
+        self.search_dock.set_workspace(self.workspace_root)
+        self.outline_dock.set_workspace(self.workspace_root)
+
+        self._reset_editor_tabs()
+        self._open_initial_note()
+
+    def _reset_editor_tabs(self) -> None:
+        while self.workspace_tabs.count() > 0:
+            widget = self.workspace_tabs.widget(0)
+            self.workspace_tabs.removeTab(0)
+            if widget is not None:
+                widget.deleteLater()
+
+        self.editor = NoteEditorWidget(self)
+        self.workspace_tabs.addTab(self.editor, "Untitled")
+        self._connect_editor(self.editor)
 
     def eventFilter(self, watched: object, event: QEvent) -> bool:
         if self._is_save_shortcut_event(event):
@@ -170,8 +196,12 @@ class MainWindow(QMainWindow):
     def _connect_editor(self, editor: NoteEditorWidget) -> None:
         self._disable_editor_local_save_shortcut(editor)
         editor.content_changed.connect(self._on_editor_content_changed)
-        editor.document_changed.connect(lambda _document, target=editor: self._on_editor_document_changed(target))
-        editor.cursor_position_changed.connect(lambda position, target=editor: self._on_editor_cursor_changed(target, position))
+        editor.document_changed.connect(
+            lambda _document, target=editor: self._on_editor_document_changed(target)
+        )
+        editor.cursor_position_changed.connect(
+            lambda position, target=editor: self._on_editor_cursor_changed(target, position)
+        )
         editor.status_changed.connect(self._on_editor_status_changed)
         editor.title_changed.connect(lambda _title, target=editor: self._on_editor_title_changed(target))
         editor.save_requested.connect(lambda _payload: self.save_current_note())
@@ -181,14 +211,11 @@ class MainWindow(QMainWindow):
             return False
         if QApplication.activeModalWidget() is not None:
             return False
-
         focus_widget = QApplication.focusWidget()
         if focus_widget is not None and focus_widget is not self and not self.isAncestorOf(focus_widget):
             return False
-
         if not event.matches(QKeySequence.StandardKey.Save):
             return False
-
         event.accept()
         return True
 
@@ -201,9 +228,7 @@ class MainWindow(QMainWindow):
 
     def _current_editor(self) -> NoteEditorWidget:
         widget = self.workspace_tabs.currentWidget()
-        if isinstance(widget, NoteEditorWidget):
-            return widget
-        return self.editor
+        return widget if isinstance(widget, NoteEditorWidget) else self.editor
 
     def _current_note_path(self) -> Path | None:
         editor = self._current_editor()
@@ -211,8 +236,8 @@ class MainWindow(QMainWindow):
         return Path(file_path) if file_path else self.current_note_path
 
     def _add_note_tab(self, editor: NoteEditorWidget, title: str, note_path: Path | None) -> None:
-        index = self.workspace_tabs.addTab(editor, title or "未命名")
-        self.workspace_tabs.setTabToolTip(index, str(note_path) if note_path else "未保存笔记")
+        index = self.workspace_tabs.addTab(editor, title or "Untitled")
+        self.workspace_tabs.setTabToolTip(index, str(note_path) if note_path else "Unsaved note")
         self.workspace_tabs.setCurrentIndex(index)
         self.editor = editor
         self.current_note_path = note_path
@@ -234,12 +259,10 @@ class MainWindow(QMainWindow):
         index = self.workspace_tabs.indexOf(target)
         if index < 0:
             return
-
-        title = target.get_title() or target.get_document().get_title_from_content()
+        title = target.get_title() or target.get_document().get_title_from_content() or "Untitled"
         marker = "*" if target.has_unsaved_changes() else ""
         self.workspace_tabs.setTabText(index, f"{marker}{title}")
-        file_path = target.get_document().file_path
-        self.workspace_tabs.setTabToolTip(index, file_path or "未保存笔记")
+        self.workspace_tabs.setTabToolTip(index, target.get_document().file_path or "Unsaved note")
 
     def _on_tab_changed(self, index: int) -> None:
         widget = self.workspace_tabs.widget(index)
@@ -251,61 +274,52 @@ class MainWindow(QMainWindow):
             self._refresh_document_panels()
         elif widget is not None:
             self.current_note_path = None
-            self.status_label.setText("PDF 占位页")
+            self.status_label.setText("Reference preview")
 
     def _close_tab(self, index: int) -> None:
         widget = self.workspace_tabs.widget(index)
         if isinstance(widget, NoteEditorWidget) and not widget.maybe_save_before_close():
             return
-
         if self.workspace_tabs.count() == 1:
             if isinstance(widget, NoteEditorWidget):
-                widget.load_empty_document(title="未命名笔记")
+                widget.load_empty_document(title="Untitled")
                 self.current_note_path = None
                 self._update_tab_title(widget)
                 self._refresh_document_panels()
             return
-
         self.workspace_tabs.removeTab(index)
-        widget.deleteLater()
-
-    def _load_workspace(self) -> None:
-        self.note_dock.set_workspace(self.workspace_root)
-        self.search_dock.set_workspace(self.workspace_root)
-        self.outline_dock.set_workspace(self.workspace_root)
+        if widget is not None:
+            widget.deleteLater()
 
     def _open_initial_note(self) -> None:
         inbox = self.notes_dir / "Inbox.md"
         if inbox.exists():
             self.open_note(inbox)
             return
-
-        self.editor.load_empty_document(title="未命名笔记")
+        self.editor.load_empty_document(title="Untitled")
         self._update_tab_title(self.editor)
         self._refresh_document_panels()
 
     def open_note(self, note_path: object) -> None:
+        controller = getattr(self.app_context, "note_controller", None)
+        if controller is None:
+            self.status_label.setText("Note controller is not available")
+            return
+
         path = Path(note_path)
-        if not path.exists() or not path.is_file():
-            self.status_label.setText("无法打开所选文件")
+        result = controller.open_note(self.workspace_root, path)
+        if not result["success"]:
+            self.status_label.setText(str(result["message"]))
             return
 
-        try:
-            text = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            self._show_message(
-                QMessageBox.Icon.Warning,
-                "无法打开",
-                "该文件不是 UTF-8 Markdown 文档。",
-            )
-            return
-
-        existing_index = self._find_note_tab(path)
+        note = dict(result["data"]["note"])
+        resolved_path = Path(str(note["file_path"]))
+        existing_index = self._find_note_tab(resolved_path)
         if existing_index >= 0:
             self.workspace_tabs.setCurrentIndex(existing_index)
             self._refresh_document_panels()
-            self.outline_dock.set_object_context(self._selection_for_note(path))
-            self.status_label.setText(f"已切换: {path.name}")
+            self.outline_dock.set_object_context(self._selection_for_note(resolved_path))
+            self.status_label.setText(f"Opened {resolved_path.name}")
             return
 
         editor = self._current_editor()
@@ -316,29 +330,28 @@ class MainWindow(QMainWindow):
         ):
             editor = NoteEditorWidget(self)
 
-        note_title = path.stem
         editor.load_document(
-            text=text,
-            note_id=path.stem,
-            title=note_title,
-            file_path=str(path),
-            file_mtime=path.stat().st_mtime,
+            text=str(note.get("markdown_content") or ""),
+            note_id=str(note.get("note_id") or resolved_path.stem),
+            title=str(note.get("title") or resolved_path.stem),
+            file_path=str(resolved_path),
+            file_mtime=note.get("file_mtime"),
         )
         if self.workspace_tabs.indexOf(editor) >= 0:
-            self.current_note_path = path
+            self.current_note_path = resolved_path
             self.editor = editor
             self._update_tab_title(editor)
         else:
-            self._add_note_tab(editor, note_title, path)
-        self.note_dock.select_note_path(path)
-        self.status_label.setText(f"已打开: {path.name}")
+            self._add_note_tab(editor, str(note.get("title") or resolved_path.stem), resolved_path)
+        self.note_dock.select_note_path(resolved_path)
+        self.status_label.setText(f"Opened {resolved_path.name}")
         self._refresh_document_panels()
-        self.outline_dock.set_object_context(self._selection_for_note(path))
+        self.outline_dock.set_object_context(self._selection_for_note(resolved_path))
 
     def create_new_note(self) -> None:
         dialog = QInputDialog(self)
-        dialog.setWindowTitle("新建笔记")
-        dialog.setLabelText("笔记标题：")
+        dialog.setWindowTitle("New Note")
+        dialog.setLabelText("Note title:")
         dialog.setTextValue("Untitled")
         dialog.setStyleSheet(build_app_stylesheet())
         dialog.resize(360, 160)
@@ -346,11 +359,10 @@ class MainWindow(QMainWindow):
             return
 
         title = dialog.textValue().strip() or "Untitled"
-        safe_name = self._safe_filename(title)
-        candidate = self.notes_dir / f"{safe_name}.md"
+        candidate = self.notes_dir / f"{self._safe_filename(title)}.md"
         counter = 2
         while candidate.exists():
-            candidate = self.notes_dir / f"{safe_name}-{counter}.md"
+            candidate = self.notes_dir / f"{self._safe_filename(title)}-{counter}.md"
             counter += 1
 
         editor = NoteEditorWidget(self)
@@ -358,62 +370,54 @@ class MainWindow(QMainWindow):
         editor.set_text(f"# {title}\n\n")
         self._add_note_tab(editor, title, candidate)
         editor.focus_editor()
-        self.status_label.setText("新笔记已创建，保存后写入工作区")
+        self.status_label.setText("New note created")
         self._refresh_document_panels()
 
     def save_current_note(self) -> None:
         if not isinstance(self.workspace_tabs.currentWidget(), NoteEditorWidget):
-            self.status_label.setText("当前标签页不是 Markdown 笔记")
+            self.status_label.setText("Current tab is not a Markdown note")
+            return
+
+        controller = getattr(self.app_context, "note_controller", None)
+        if controller is None:
+            self.status_label.setText("Note controller is not available")
             return
 
         editor = self._current_editor()
-        payload = editor.build_save_payload()
-        current_path = self._current_note_path()
-        title = str(payload.get("title") or editor.get_document().get_title_from_content())
-        if current_path is None:
-            current_path = self.notes_dir / f"{self._safe_filename(title)}.md"
-
-        target_path = self._target_note_path_for_title(current_path, title)
-        self.notes_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            target_path.write_text(
-                str(payload.get("markdown_content", editor.get_text())),
-                encoding="utf-8",
-            )
-            if target_path.resolve() != current_path.resolve() and current_path.exists():
-                current_path.unlink()
-        except OSError as error:
+        result = controller.save_note(self.workspace_root, editor.build_save_payload())
+        if not result["success"]:
             editor.mark_save_failed()
-            self._show_message(QMessageBox.Icon.Critical, "保存失败", str(error))
+            self._show_message(QMessageBox.Icon.Critical, "Save Failed", str(result["message"]))
             return
 
+        note = dict(result["data"]["note"])
+        target_path = Path(str(note["file_path"]))
         self.current_note_path = target_path
         editor.get_document().bind_file_path(target_path)
-        editor.mark_saved(file_mtime=target_path.stat().st_mtime)
+        editor.mark_saved(file_mtime=note.get("file_mtime"))
         self._update_tab_title(editor)
         self.note_dock.refresh()
         self.note_dock.select_note_path(target_path)
         self.search_dock.perform_search()
         self._refresh_document_panels()
         self.outline_dock.set_object_context(self._selection_for_note(target_path))
-        self.status_label.setText(f"已保存: {target_path.name}")
+        self.status_label.setText(f"Saved {target_path.name}")
 
     def delete_current_note(self) -> None:
         editor = self._current_editor()
         current_path = self._current_note_path()
         if current_path is None or not current_path.exists():
             if editor.get_text().strip() and self._ask_confirmation(
-                "丢弃未保存笔记",
-                "当前笔记尚未保存。确定要丢弃这篇未保存的笔记吗？",
-                confirm_text="丢弃",
+                "Discard Unsaved Note",
+                "The current note has not been saved. Discard it?",
+                confirm_text="Discard",
             ):
-                editor.load_empty_document(title="未命名笔记")
+                editor.load_empty_document(title="Untitled")
                 self.current_note_path = None
                 self._update_tab_title(editor)
                 self._refresh_document_panels()
-                self.status_label.setText("未保存笔记已丢弃")
+                self.status_label.setText("Unsaved note discarded")
             return
-
         self.delete_note(current_path)
 
     def delete_note(self, note_path: object) -> None:
@@ -421,32 +425,33 @@ class MainWindow(QMainWindow):
         if not self._is_deletable_note_path(path):
             self._show_message(
                 QMessageBox.Icon.Warning,
-                "无法删除",
-                "只能删除当前工作区 notes 目录下的 Markdown 笔记。",
+                "Delete Blocked",
+                "Only Markdown notes inside workspace/notes can be deleted.",
             )
             return
 
         if not path.exists():
             self.refresh_workspace()
-            self.status_label.setText("笔记已不存在，工作区已刷新")
+            self.status_label.setText("Note does not exist anymore")
             return
 
         if not self._ask_confirmation(
-            "删除笔记",
-            f"确定要删除笔记“{path.stem}”吗？\n\n该操作会删除工作区中的 Markdown 文件。",
+            "Delete Note",
+            f"Delete note '{path.stem}' from the workspace?",
         ):
             return
 
-        was_current_note = self.current_note_path is not None and (
-            path.resolve() == self.current_note_path.resolve()
-        )
-
-        try:
-            path.unlink()
-        except OSError as error:
-            self._show_message(QMessageBox.Icon.Critical, "删除失败", str(error))
+        controller = getattr(self.app_context, "note_controller", None)
+        if controller is None:
+            self.status_label.setText("Note controller is not available")
             return
 
+        result = controller.delete_note(self.workspace_root, path)
+        if not result["success"]:
+            self._show_message(QMessageBox.Icon.Critical, "Delete Failed", str(result["message"]))
+            return
+
+        was_current_note = self.current_note_path is not None and path.resolve() == self.current_note_path.resolve()
         self.note_dock.refresh()
         self.search_dock.perform_search()
 
@@ -461,31 +466,38 @@ class MainWindow(QMainWindow):
             if next_note is not None:
                 self.open_note(next_note)
             else:
-                self._current_editor().load_empty_document(title="未命名笔记")
+                self._current_editor().load_empty_document(title="Untitled")
                 self._update_tab_title()
                 self._refresh_document_panels()
 
-        self.status_label.setText(f"已删除: {path.name}")
+        self.status_label.setText(f"Deleted {path.name}")
 
     def refresh_workspace(self) -> None:
-        self._load_workspace()
+        self.note_dock.refresh()
+        self.search_dock.set_workspace(self.workspace_root)
+        self.outline_dock.set_workspace(self.workspace_root)
         self._refresh_document_panels()
-        self.status_label.setText("工作区已刷新")
+        self.status_label.setText("Workspace refreshed")
 
     def show_workspace_picker(self) -> None:
         dialog = WorkspacePickerDialog(initial_path=self.workspace_root, parent=self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-
         selected = dialog.selected_workspace()
         if selected is None:
             return
 
-        self._show_message(
-            QMessageBox.Icon.Information,
-            "工作区选择",
-            f"已选择工作区：{selected}\n\n当前 UI 只负责路径选择，实际切换将在 controller 接口稳定后接入。",
-        )
+        current_editor = self._current_editor()
+        if isinstance(current_editor, NoteEditorWidget) and not current_editor.maybe_save_before_close():
+            return
+
+        try:
+            new_context = bootstrap_workspace(selected)
+        except Exception as error:
+            self._show_message(QMessageBox.Icon.Critical, "Open Workspace Failed", str(error))
+            return
+
+        self._apply_workspace_context(new_context)
 
     def goto_line(self, line_number: int) -> None:
         editor = self._current_editor()
@@ -494,13 +506,13 @@ class MainWindow(QMainWindow):
 
     def show_command_palette(self) -> None:
         commands = [
-            CommandItem("新建笔记", self.create_new_note, "创建一个新的 Markdown 编辑页"),
-            CommandItem("打开工作区", self.show_workspace_picker, "选择工作区目录"),
-            CommandItem("保存当前笔记", self.save_current_note, "保存当前标签页中的 Markdown"),
-            CommandItem("删除当前笔记", self.delete_current_note, "删除当前工作区 notes 下的 Markdown"),
-            CommandItem("打开知识模型", self.focus_knowledge_model, "聚焦星系-行星-星球-卫星模型树"),
-            CommandItem("聚焦搜索", self.search_dock.focus_search, "跳转到右侧搜索面板"),
-            CommandItem("刷新工作区", self.refresh_workspace, "重新扫描工作区资源"),
+            CommandItem("New Note", self.create_new_note, "Create a new Markdown note"),
+            CommandItem("Open Workspace", self.show_workspace_picker, "Switch to another workspace"),
+            CommandItem("Save Note", self.save_current_note, "Save the current note"),
+            CommandItem("Delete Note", self.delete_current_note, "Delete the current note"),
+            CommandItem("Focus Knowledge Model", self.focus_knowledge_model, "Open the knowledge model view"),
+            CommandItem("Focus Search", self.search_dock.focus_search, "Jump to global search"),
+            CommandItem("Refresh Workspace", self.refresh_workspace, "Reload notes and references"),
         ]
         dialog = CommandPaletteDialog(commands, self)
         dialog.exec()
@@ -509,19 +521,19 @@ class MainWindow(QMainWindow):
         self.note_dock.show()
         self.note_dock.raise_()
         self.note_dock.tabs.setCurrentWidget(self.note_dock.model_page)
-        self.status_label.setText("已聚焦知识模型")
+        self.status_label.setText("Knowledge model focused")
 
     def open_knowledge_object(self, selection: KnowledgeSelection) -> None:
         if selection.kind == KnowledgeObjectKind.STAR_NOTE and selection.path is not None:
             self.open_note(selection.path)
             self.outline_dock.set_object_context(selection)
             return
-
-        if selection.kind == KnowledgeObjectKind.STAR_REFERENCE and selection.path is not None:
-            self.open_pdf_placeholder(selection.path)
+        if selection.kind == KnowledgeObjectKind.STAR_REFERENCE:
+            self.open_pdf_placeholder(
+                {"title": selection.title, "display_path": str(selection.path) if selection.path else None}
+            )
             self.outline_dock.set_object_context(selection)
             return
-
         if selection.kind == KnowledgeObjectKind.SATELLITE and selection.path is not None:
             if selection.path.suffix.lower() == ".md":
                 self.open_note(selection.path)
@@ -531,7 +543,6 @@ class MainWindow(QMainWindow):
                 self.open_pdf_placeholder(selection.path)
             self.outline_dock.set_object_context(selection)
             return
-
         self.open_knowledge_dashboard(selection)
         self.outline_dock.set_object_context(selection)
 
@@ -551,58 +562,62 @@ class MainWindow(QMainWindow):
         self.workspace_tabs.setTabToolTip(index, tab_key)
         self.workspace_tabs.setCurrentIndex(index)
 
-    def show_planet_assignment_placeholder(self, path: object, planet: str) -> None:
-        target_path = Path(path)
-        self.note_dock.assign_path_to_planet(target_path, planet)
-        self.note_dock.tabs.setCurrentWidget(self.note_dock.model_page)
-        self.status_label.setText(f"已归入 {planet} 行星: {target_path.name}")
-        self._show_message(
-            QMessageBox.Icon.Information,
-            "知识对象归类",
-            f"已在 UI 展示层归入：\n{target_path.name} → {planet}\n\n"
-            "当前归类结果保存在本次界面会话中，实际持久化等待 controller/service 接口接入。",
-        )
+    def assign_object_to_planet(self, target: object, planet: str) -> None:
+        if not isinstance(target, dict):
+            return
 
-    def open_pdf_placeholder(self, pdf_path: object) -> None:
-        path = Path(pdf_path)
+        controller = getattr(self.app_context, "knowledge_controller", None)
+        if controller is None:
+            self.status_label.setText("Knowledge controller is not available")
+            return
+
+        result = controller.assign_object_to_planet(
+            self.workspace_root,
+            object_kind=str(target.get("object_kind") or ""),
+            object_key=str(target.get("object_key") or ""),
+            planet=planet,
+        )
+        if not result["success"]:
+            self._show_message(QMessageBox.Icon.Warning, "Assign Planet Failed", str(result["message"]))
+            return
+
+        self.note_dock.refresh()
+        display_name = str(target.get("title") or target.get("object_key") or "")
+        self.status_label.setText(f"Assigned {display_name} -> {planet}")
+
+    def open_pdf_placeholder(self, pdf_ref: object) -> None:
+        if isinstance(pdf_ref, dict):
+            title = str(pdf_ref.get("title") or pdf_ref.get("reference_id") or "Reference")
+            path_value = pdf_ref.get("display_path")
+            path = Path(str(path_value)) if path_value else None
+        else:
+            path = Path(pdf_ref)
+            title = path.name
+
+        tab_key = str(path) if path is not None else f"reference:{title}"
         for index in range(self.workspace_tabs.count()):
-            if self.workspace_tabs.tabToolTip(index) == str(path):
+            if self.workspace_tabs.tabToolTip(index) == tab_key:
                 self.workspace_tabs.setCurrentIndex(index)
-                self.outline_dock.set_object_context(
-                    KnowledgeSelection(
-                        kind=KnowledgeObjectKind.STAR_REFERENCE,
-                        title=path.name,
-                        path=path,
-                        description="文献或附件星球。PDF 阅读、批注和摘录会在后续服务接口稳定后接入。",
-                        tags=("文献", path.suffix.lower().lstrip(".")),
-                    )
-                )
                 return
 
-        label = QLabel(
-            f"PDF 预览占位\n\n{path.name}\n\n后续可在这里接入 PDF 预览、页码跳转和引用插入。",
-            self,
-        )
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        label.setObjectName("pdf_placeholder")
-        index = self.workspace_tabs.addTab(label, path.name)
-        self.workspace_tabs.setTabToolTip(index, str(path))
+        body = QLabel(self)
+        body.setObjectName("knowledge_dashboard")
+        body.setWordWrap(True)
+        body.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        body.setMargin(24)
+        if path is not None:
+            body.setText(f"Reference Preview\n\n{title}\n\n{path}")
+        else:
+            body.setText(f"Reference Preview\n\n{title}\n\nNo local file is bound yet.")
+        index = self.workspace_tabs.addTab(body, title)
+        self.workspace_tabs.setTabToolTip(index, tab_key)
         self.workspace_tabs.setCurrentIndex(index)
-        self.outline_dock.set_object_context(
-            KnowledgeSelection(
-                kind=KnowledgeObjectKind.STAR_REFERENCE,
-                title=path.name,
-                path=path,
-                description="文献或附件星球。PDF 阅读、批注和摘录会在后续服务接口稳定后接入。",
-                tags=("文献", path.suffix.lower().lstrip(".")),
-            )
-        )
 
     def show_about_dialog(self) -> None:
         self._show_message(
             QMessageBox.Icon.Information,
-            "关于 Agni",
-            "Agni 当前工作台提供三栏布局、Markdown 编辑、工作区资源、全文搜索、反向链接、大纲与 PDF 面板。当前界面层不直接操作数据库，后续可继续接入 service 与 repository。",
+            "About Agni",
+            "This build uses the workspace SQLite database for notes, references, links, search, and knowledge model data.",
         )
 
     def _show_message(self, icon: QMessageBox.Icon, title: str, text: str) -> None:
@@ -612,12 +627,9 @@ class MainWindow(QMainWindow):
         message_box.setText(text)
         message_box.setStandardButtons(QMessageBox.StandardButton.Ok)
         message_box.setStyleSheet(build_app_stylesheet())
-        ok_button = message_box.button(QMessageBox.StandardButton.Ok)
-        if ok_button is not None:
-            ok_button.setText("确定")
         message_box.exec()
 
-    def _ask_confirmation(self, title: str, text: str, *, confirm_text: str = "删除") -> bool:
+    def _ask_confirmation(self, title: str, text: str, *, confirm_text: str = "Delete") -> bool:
         message_box = QMessageBox(self)
         message_box.setIcon(QMessageBox.Icon.Warning)
         message_box.setWindowTitle(title)
@@ -629,13 +641,9 @@ class MainWindow(QMainWindow):
         message_box.setStyleSheet(build_app_stylesheet())
 
         yes_button = message_box.button(QMessageBox.StandardButton.Yes)
-        no_button = message_box.button(QMessageBox.StandardButton.No)
         if yes_button is not None:
             yes_button.setText(confirm_text)
             yes_button.setObjectName("destructive_button")
-        if no_button is not None:
-            no_button.setText("取消")
-
         return message_box.exec() == QMessageBox.StandardButton.Yes
 
     def _on_editor_content_changed(self, _text: str) -> None:
@@ -653,7 +661,7 @@ class MainWindow(QMainWindow):
 
     def _on_editor_cursor_changed(self, editor: NoteEditorWidget, position: int) -> None:
         if self.workspace_tabs.currentWidget() is editor:
-            self.status_label.setText(f"光标: {position}")
+            self.status_label.setText(f"Cursor: {position}")
 
     def _on_editor_title_changed(self, editor: NoteEditorWidget) -> None:
         self._update_tab_title(editor)
@@ -663,11 +671,11 @@ class MainWindow(QMainWindow):
     def _on_editor_status_changed(self, status: str) -> None:
         self._update_tab_title()
         status_text = {
-            "idle": "就绪",
-            "editing": "未保存",
-            "saved": "已保存",
-            "save_failed": "保存失败",
-            "external_modified": "外部修改",
+            "idle": "Ready",
+            "editing": "Unsaved",
+            "saved": "Saved",
+            "save_failed": "Save failed",
+            "external_modified": "Externally modified",
         }.get(status, status)
         self.status_label.setText(status_text)
 
@@ -685,7 +693,7 @@ class MainWindow(QMainWindow):
                 kind="heading",
                 host_title=note_path.stem,
                 line_number=int(getattr(heading, "line_number", 1)),
-                preview=f"Markdown heading · line {getattr(heading, 'line_number', 1)}",
+                preview=f"Markdown heading at line {getattr(heading, 'line_number', 1)}",
             )
             for heading in document.extract_headings()
             if getattr(heading, "title", "")
@@ -694,8 +702,8 @@ class MainWindow(QMainWindow):
             kind=KnowledgeObjectKind.STAR_NOTE,
             title=document.title or document.get_title_from_content() or note_path.stem,
             path=note_path,
-            description="Markdown 笔记星球，可通过标题、引用块和后续批注形成卫星。",
-            tags=("笔记", "Markdown"),
+            description="Markdown note",
+            tags=("note", "markdown"),
             satellites=satellites,
         )
 
@@ -708,40 +716,14 @@ class MainWindow(QMainWindow):
             position += len(line)
         return len(text)
 
-    def _target_note_path_for_title(self, current_path: Path, title: str) -> Path:
-        safe_title = self._safe_filename(title)
-        if not safe_title or safe_title == current_path.stem:
-            return current_path
-
-        target = current_path.with_name(f"{safe_title}.md")
-        if not target.exists() or target.resolve() == current_path.resolve():
-            return target
-
-        counter = 2
-        while True:
-            candidate = current_path.with_name(f"{safe_title}-{counter}.md")
-            if not candidate.exists() or candidate.resolve() == current_path.resolve():
-                return candidate
-            counter += 1
-
     def _knowledge_dashboard_text(self, selection: KnowledgeSelection) -> str:
-        model_hint = (
-            "星系：当前工作区\n"
-            "行星：主题/阶段/场景分组\n"
-            "星球：笔记、文献或 PDF 等知识对象\n"
-            "卫星：标题、摘录、批注、反链、标签等附属信息"
-        )
-        path_text = str(selection.path) if selection.path is not None else "无文件路径"
-        satellites = "\n".join(f"- {item.title}" for item in selection.satellites[:8])
-        if not satellites:
-            satellites = "- 暂无卫星条目"
+        path_text = str(selection.path) if selection.path is not None else "No file path"
+        satellites = "\n".join(f"- {item.title}" for item in selection.satellites[:8]) or "- No satellites"
         return (
             f"{selection.title}\n\n"
-            f"{selection.description or '知识模型展示入口'}\n\n"
-            f"{model_hint}\n\n"
-            f"路径：{path_text}\n\n"
-            f"卫星预览：\n{satellites}\n\n"
-            "这是 UI 展示层入口，不在此处写入数据库关系。"
+            f"{selection.description or 'Knowledge model entry'}\n\n"
+            f"Path: {path_text}\n\n"
+            f"Satellites:\n{satellites}"
         )
 
     def _safe_filename(self, title: str) -> str:
@@ -756,12 +738,10 @@ class MainWindow(QMainWindow):
             resolved_note.relative_to(resolved_notes_dir)
         except ValueError:
             return False
-
         return resolved_note.suffix.lower() == ".md"
 
     def _find_first_note(self) -> Path | None:
         if not self.notes_dir.exists():
             return None
-
         notes = sorted(self.notes_dir.rglob("*.md"), key=lambda item: item.name.lower())
         return notes[0] if notes else None
