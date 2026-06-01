@@ -25,3 +25,6 @@ class PdfController:
 
     def list_reference_annotations(self, workspace_root: str | Path, reference_id: str) -> dict[str, object]:
         return self.pdf_service.list_reference_annotations(workspace_root, reference_id)
+
+    def delete_annotation(self, workspace_root: str | Path, annotation_id: str) -> dict[str, object]:
+        return self.pdf_service.delete_annotation(workspace_root, annotation_id)

@@ -1,29 +1,60 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, Qt
-from PySide6.QtGui import QKeySequence
+from PySide6.QtCore import QEvent, Qt, QUrl
+from PySide6.QtGui import QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
+    QDialogButtonBox,
+    QFileDialog,
+    QHBoxLayout,
     QInputDialog,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMessageBox,
+    QPushButton,
+    QStackedWidget,
     QTabWidget,
     QToolBar,
+    QVBoxLayout,
     QWidget,
 )
 
+from app.bootstrap.config import AppConfig
+from app.controllers.knowledge_controller import KnowledgeController
+from app.controllers.pdf_controller import PdfController
+from app.controllers.workspace_controller import WorkspaceController
+from app.services.knowledge_model_service import KnowledgeModelService
+from app.services.pdf_service import PdfService
+from app.services.reference_service import ReferenceService
+from app.services.workspace_service import WorkspaceService
 from app.ui.actions import AgniActionSet, build_app_stylesheet
 from app.ui.dialogs.command_palette_dialog import CommandPaletteDialog
 from app.ui.dialogs.workspace_picker_dialog import WorkspacePickerDialog
 from app.ui.docks.note_list_dock import NoteListDock
 from app.ui.docks.outline_dock import OutlineDock
 from app.ui.docks.search_dock import SearchDock
-from app.ui.models.ui_items import CommandItem, KnowledgeObjectKind, KnowledgeSelection, SatelliteItem
+from app.ui.models.note_title_store import (
+    remove_title_for_path,
+    set_title_for_path,
+    title_for_path,
+)
+from app.ui.models.satellite_parser import extract_markdown_satellites
+from app.ui.models.ui_items import (
+    CommandItem,
+    KnowledgeGraphNode,
+    KnowledgeObjectKind,
+    KnowledgeSelection,
+    SatelliteItem,
+)
+from app.ui.widgets.knowledge_graph_widget import KnowledgeGraphWidget, PLANET_DEFAULT_COLOR, SUN_COLOR
 from app.ui.widgets.note_editor_widget import NoteEditorWidget
+from app.ui.widgets.pdf_viewer_widget import PdfViewerWidget
 
 
 class MainWindow(QMainWindow):
@@ -33,9 +64,20 @@ class MainWindow(QMainWindow):
         self.workspace_root = Path(app_context.workspace_root)
         self.notes_dir = self.workspace_root / "notes"
         self.current_note_path: Path | None = None
+        self.workspace_service = WorkspaceService(AppConfig())
+        self.workspace_controller = WorkspaceController(self.workspace_service)
+        self.reference_service = ReferenceService(self.workspace_service)
+        self.knowledge_controller = KnowledgeController(
+            KnowledgeModelService(self.workspace_service)
+        )
+        self.pdf_controller = PdfController(
+            PdfService(self.workspace_service, self.reference_service)
+        )
 
         self.setObjectName("agni_main_window")
         self.setWindowTitle(f"Agni - {self.workspace_root.name}")
+        self.project_root = Path(__file__).resolve().parents[2]
+        self.workspace_store_root = self.project_root
         self.resize(1360, 820)
         self.setMinimumSize(1080, 680)
         self.setDockOptions(
@@ -45,11 +87,20 @@ class MainWindow(QMainWindow):
         )
 
         self.actions = AgniActionSet.build(self)
+        self.central_stack = QStackedWidget(self)
+        self.cover_page = QWidget(self)
+        self.cover_graph = KnowledgeGraphWidget(self, cover_mode=True)
+        self.cover_storage_button = QPushButton("选择工作区目录", self)
+        self.cover_new_workspace_button = QPushButton("新建工作区", self)
+        self.cover_delete_workspace_button = QPushButton("删除工作区", self)
+        self.cover_return_button = QPushButton("返回工作台", self)
         self.workspace_tabs = QTabWidget(self)
         self.editor = NoteEditorWidget(self)
         self.note_dock = NoteListDock(self)
         self.search_dock = SearchDock(self)
         self.outline_dock = OutlineDock(self)
+        self.main_toolbar: QToolBar | None = None
+        self._pre_pdf_dock_visibility: tuple[bool, bool, bool] | None = None
         self.workspace_label = QLabel(self)
         self.status_label = QLabel("就绪", self)
 
@@ -58,19 +109,60 @@ class MainWindow(QMainWindow):
         self._install_app_shortcut_filter()
         self._load_workspace()
         self._open_initial_note()
+        self.show_star_map_cover()
 
     def _build_ui(self) -> None:
         self.setStyleSheet(build_app_stylesheet())
+        self.cover_page = self._build_cover_page()
         self.workspace_tabs.setObjectName("workspace_tabs")
         self.workspace_tabs.setTabsClosable(True)
         self.workspace_tabs.setMovable(True)
         self.workspace_tabs.addTab(self.editor, "未命名")
-        self.setCentralWidget(self.workspace_tabs)
+        self.central_stack.addWidget(self.cover_page)
+        self.central_stack.addWidget(self.workspace_tabs)
+        self.setCentralWidget(self.central_stack)
 
         self._build_menu_bar()
         self._build_toolbar()
         self._build_docks()
         self._build_status_bar()
+
+    def _build_cover_page(self) -> QWidget:
+        page = QWidget(self)
+        page.setObjectName("graph_cover_page")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(28, 20, 28, 20)
+        layout.setSpacing(10)
+
+        title = QLabel("Agni 星图", page)
+        title.setObjectName("cover_title")
+        subtitle = QLabel("从星系进入工作区，用行星组织主题，用星球与卫星定位知识对象。", page)
+        subtitle.setObjectName("cover_subtitle")
+
+        self.cover_storage_button.setObjectName("cover_secondary_button")
+        self.cover_new_workspace_button.setObjectName("cover_primary_button")
+        self.cover_delete_workspace_button.setObjectName("cover_secondary_button")
+        self.cover_return_button.setObjectName("cover_secondary_button")
+        self.cover_storage_button.clicked.connect(self.choose_workspace_store_root)
+        self.cover_new_workspace_button.clicked.connect(self.create_new_workspace)
+        self.cover_delete_workspace_button.clicked.connect(self.delete_workspace_from_store)
+        self.cover_return_button.clicked.connect(self.show_workbench)
+        self.cover_return_button.hide()
+
+        button_layout = QHBoxLayout()
+        button_layout.setContentsMargins(0, 0, 0, 0)
+        button_layout.setSpacing(10)
+        button_layout.addWidget(self.cover_storage_button)
+        button_layout.addWidget(self.cover_new_workspace_button)
+        button_layout.addWidget(self.cover_delete_workspace_button)
+        button_layout.addWidget(self.cover_return_button)
+        button_layout.addStretch(1)
+
+        layout.addWidget(title)
+        layout.addWidget(subtitle)
+        layout.addLayout(button_layout)
+        layout.addWidget(self.cover_graph, 1)
+        return page
 
     def _build_menu_bar(self) -> None:
         file_menu = self.menuBar().addMenu("文件")
@@ -83,58 +175,287 @@ class MainWindow(QMainWindow):
 
         view_menu = self.menuBar().addMenu("视图")
         view_menu.addAction(self.actions.toggle_notes)
-        view_menu.addAction(self.actions.toggle_search)
-        view_menu.addAction(self.actions.toggle_outline)
+        right_sidebar_menu = view_menu.addMenu("右侧边栏")
+        right_sidebar_menu.addAction(self.actions.toggle_outline)
+        right_sidebar_menu.addAction(self.actions.toggle_search)
+        view_menu.addSeparator()
+        view_menu.addAction(self.actions.toggle_main_toolbar)
 
         tools_menu = self.menuBar().addMenu("工具")
         tools_menu.addAction(self.actions.command_palette)
         tools_menu.addAction(self.actions.focus_search)
 
+        pdf_menu = self.menuBar().addMenu("PDF")
+        pdf_menu.addAction(self.actions.open_pdf)
+        pdf_menu.addSeparator()
+        pdf_menu.addAction(self.actions.previous_pdf_page)
+        pdf_menu.addAction(self.actions.next_pdf_page)
+        pdf_menu.addAction(self.actions.zoom_in_pdf)
+        pdf_menu.addAction(self.actions.zoom_out_pdf)
+        pdf_menu.addAction(self.actions.fit_pdf_width)
+        pdf_menu.addSeparator()
+        pdf_menu.addAction(self.actions.insert_pdf_excerpt)
+        pdf_menu.addAction(self.actions.insert_pdf_citation)
+
         help_menu = self.menuBar().addMenu("帮助")
         help_menu.addAction(self.actions.about)
+        self.menuBar().addAction(self.actions.toggle_main_toolbar)
 
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("主工具栏", self)
         toolbar.setObjectName("main_toolbar")
         toolbar.setMovable(False)
-        toolbar.addAction(self.actions.new_note)
         toolbar.addAction(self.actions.open_workspace)
+        toolbar.addAction(self.actions.refresh_workspace)
+        toolbar.addSeparator()
+        toolbar.addAction(self.actions.new_note)
         toolbar.addAction(self.actions.save_note)
         toolbar.addAction(self.actions.delete_note)
         toolbar.addSeparator()
-        toolbar.addAction(self.actions.focus_search)
+        toolbar.addAction(self.actions.open_pdf)
+        toolbar.addSeparator()
         toolbar.addAction(self.actions.command_palette)
         toolbar.addSeparator()
-        toolbar.addAction(self.actions.refresh_workspace)
+        toolbar.addAction(self.actions.toggle_main_toolbar)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
+        self.main_toolbar = toolbar
 
     def _build_docks(self) -> None:
+        self.setCorner(Qt.Corner.TopRightCorner, Qt.DockWidgetArea.RightDockWidgetArea)
+        self.setCorner(Qt.Corner.BottomRightCorner, Qt.DockWidgetArea.RightDockWidgetArea)
+        self.setTabPosition(Qt.DockWidgetArea.RightDockWidgetArea, QTabWidget.TabPosition.North)
+        self.search_dock.setMinimumWidth(320)
+        self.outline_dock.setMinimumWidth(320)
+
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.note_dock)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.search_dock)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.outline_dock)
         self.tabifyDockWidget(self.search_dock, self.outline_dock)
         self.search_dock.raise_()
         self.resizeDocks([self.note_dock], [300], Qt.Orientation.Horizontal)
-        self.resizeDocks([self.search_dock, self.outline_dock], [340, 340], Qt.Orientation.Horizontal)
+        self.resizeDocks(
+            [self.note_dock, self.search_dock],
+            [300, 360],
+            Qt.Orientation.Horizontal,
+        )
 
     def _build_status_bar(self) -> None:
         self.workspace_label.setText(f"工作区: {self.workspace_root}")
         self.statusBar().addWidget(self.workspace_label, 1)
         self.statusBar().addPermanentWidget(self.status_label)
 
+    def show_star_map_cover(self, *, from_workbench: bool = False) -> None:
+        self._sync_cover_graph()
+        self.cover_return_button.setVisible(from_workbench)
+        self.central_stack.setCurrentWidget(self.cover_page)
+        self.menuBar().hide()
+        if self.main_toolbar is not None:
+            self.main_toolbar.hide()
+        self.note_dock.hide()
+        self.search_dock.hide()
+        self.outline_dock.hide()
+        self.statusBar().hide()
+        self.status_label.setText("星图封面")
+
+    def show_workbench(self) -> None:
+        self.central_stack.setCurrentWidget(self.workspace_tabs)
+        self.menuBar().show()
+        self._set_main_toolbar_expanded(self.actions.toggle_main_toolbar.isChecked())
+        self.statusBar().show()
+        self.note_dock.show()
+        self.search_dock.show()
+        self.outline_dock.show()
+        self._stabilize_right_docks()
+        self.actions.toggle_notes.setChecked(True)
+        self.actions.toggle_search.setChecked(True)
+        self.actions.toggle_outline.setChecked(True)
+        self.status_label.setText("工作台")
+
+    def _stabilize_right_docks(self, active: str | None = None) -> None:
+        self.setTabPosition(Qt.DockWidgetArea.RightDockWidgetArea, QTabWidget.TabPosition.North)
+        if self.search_dock.isVisible() and self.outline_dock.isVisible():
+            self.tabifyDockWidget(self.search_dock, self.outline_dock)
+        if active == "search" and self.search_dock.isVisible():
+            self.search_dock.raise_()
+        elif active == "outline" and self.outline_dock.isVisible():
+            self.outline_dock.raise_()
+
+    def _handle_search_visibility_action(self, checked: bool) -> None:
+        if checked:
+            self._stabilize_right_docks("search")
+            self.search_dock.focus_search()
+
+    def _handle_outline_visibility_action(self, checked: bool) -> None:
+        if checked:
+            self._stabilize_right_docks("outline")
+            self.outline_dock.focus_default()
+
+    def _set_main_toolbar_expanded(self, expanded: bool) -> None:
+        self.actions.toggle_main_toolbar.setText("收起工具栏" if expanded else "展开工具栏")
+        if self.central_stack.currentWidget() is self.cover_page:
+            if self.main_toolbar is not None:
+                self.main_toolbar.hide()
+            return
+
+        if self.main_toolbar is not None:
+            self.main_toolbar.setVisible(expanded)
+
+    def _sync_cover_graph(self) -> None:
+        systems = self._workspace_graph_systems()
+        self.cover_graph.set_cover_graphs(systems)
+
+    def _workspace_graph_systems(
+        self,
+    ) -> list[tuple[KnowledgeGraphNode, list[KnowledgeGraphNode], dict[str, list[KnowledgeGraphNode]]]]:
+        systems: list[
+            tuple[KnowledgeGraphNode, list[KnowledgeGraphNode], dict[str, list[KnowledgeGraphNode]]]
+        ] = []
+        for workspace_root in self._workspace_candidates():
+            snapshot = self._graph_snapshot_for_workspace(workspace_root)
+            if snapshot is not None:
+                systems.append(snapshot)
+        return systems
+
+    def _workspace_candidates(self) -> list[Path]:
+        store_root = self.workspace_store_root.expanduser().resolve()
+        candidates: list[Path] = []
+        if store_root.exists() and store_root.is_dir():
+            candidates = [
+                path.resolve()
+                for path in sorted(store_root.iterdir(), key=lambda item: item.name.lower())
+                if self._is_workspace_dir(path)
+            ]
+
+        current_root = self.workspace_root.resolve()
+        if current_root.parent == store_root and current_root not in candidates and self._is_workspace_dir(current_root):
+            candidates.append(current_root)
+        return candidates
+
+    def _is_workspace_dir(self, path: Path) -> bool:
+        return path.is_dir() and (path / ".agni").is_dir() and (path / "notes").is_dir()
+
+    def _graph_snapshot_for_workspace(
+        self,
+        workspace_root: Path,
+    ) -> tuple[KnowledgeGraphNode, list[KnowledgeGraphNode], dict[str, list[KnowledgeGraphNode]]] | None:
+        if workspace_root.resolve() == self.workspace_root.resolve():
+            snapshot = self.note_dock.knowledge_graph_snapshot()
+            if snapshot is not None:
+                return snapshot
+
+        result = self.knowledge_controller.get_knowledge_model(workspace_root)
+        if not result.get("success"):
+            return None
+        data = result.get("data", {})
+        galaxy_payload = data.get("galaxy") if isinstance(data, dict) else None
+        if not isinstance(galaxy_payload, dict):
+            return None
+
+        galaxy_title = str(galaxy_payload.get("title") or workspace_root.name)
+        galaxy_node = KnowledgeGraphNode(
+            kind=KnowledgeObjectKind.GALAXY,
+            title=galaxy_title,
+            color=SUN_COLOR,
+            path=workspace_root,
+            description="Agni 工作区",
+            tags=("工作区",),
+        )
+        planets: list[KnowledgeGraphNode] = []
+        stars_by_planet: dict[str, list[KnowledgeGraphNode]] = {}
+
+        for planet_payload in tuple(galaxy_payload.get("planets") or ()):
+            if not isinstance(planet_payload, dict):
+                continue
+            raw_planet = str(planet_payload.get("title") or "Unassigned")
+            planet_title = self.note_dock.planet_display_title(raw_planet)
+            if not planet_title.strip():
+                continue
+            planet_node = KnowledgeGraphNode(
+                kind=KnowledgeObjectKind.PLANET,
+                title=planet_title,
+                color=self._planet_color(planet_title),
+                description=str(planet_payload.get("description") or ""),
+                planet=planet_title,
+            )
+            planets.append(planet_node)
+            stars_by_planet.setdefault(planet_title, [])
+
+            for star_payload in tuple(planet_payload.get("stars") or ()):
+                if not isinstance(star_payload, dict):
+                    continue
+                object_kind = str(star_payload.get("object_kind") or "note")
+                star_path_value = star_payload.get("path")
+                star_path = Path(str(star_path_value)) if star_path_value else None
+                if star_path is not None and not star_path.is_absolute():
+                    star_path = workspace_root / star_path
+                star_kind = (
+                    KnowledgeObjectKind.STAR_REFERENCE
+                    if object_kind == "reference"
+                    else KnowledgeObjectKind.STAR_NOTE
+                )
+                if star_kind == KnowledgeObjectKind.STAR_NOTE and (
+                    star_path is None or not star_path.exists() or not star_path.is_file()
+                ):
+                    continue
+                if object_kind == "note" and star_path is not None:
+                    star_title = title_for_path(workspace_root, star_path) or star_path.stem
+                    try:
+                        star_text = star_path.read_text(encoding="utf-8")
+                    except (OSError, UnicodeDecodeError):
+                        satellites = ()
+                    else:
+                        satellites = extract_markdown_satellites(star_text, star_title)
+                else:
+                    star_title = str(
+                        star_payload.get("title")
+                        or star_payload.get("object_key")
+                        or "Untitled"
+                    )
+                    satellites = ()
+                stars_by_planet[planet_title].append(
+                    KnowledgeGraphNode(
+                        kind=star_kind,
+                        title=star_title,
+                        color=self._planet_color(planet_title),
+                        path=star_path,
+                        description="文献或附件星球" if object_kind == "reference" else "Markdown 笔记星球",
+                        planet=planet_title,
+                        tags=tuple(str(tag) for tag in tuple(star_payload.get("tags") or ())),
+                        satellites=satellites,
+                    )
+                )
+
+        return galaxy_node, planets, stars_by_planet
+
+    def _planet_color(self, planet_title: str) -> str:
+        from app.ui.widgets.knowledge_graph_widget import PLANET_COLORS
+
+        return PLANET_COLORS.get(planet_title, PLANET_DEFAULT_COLOR)
+
     def _bind_signals(self) -> None:
         self.actions.new_note.triggered.connect(self.create_new_note)
         self.actions.open_workspace.triggered.connect(self.show_workspace_picker)
         self.actions.save_note.triggered.connect(self.save_current_note)
         self.actions.delete_note.triggered.connect(self.delete_current_note)
+        self.actions.open_pdf.triggered.connect(self.open_pdf_from_dialog)
+        self.actions.previous_pdf_page.triggered.connect(self.go_previous_pdf_page)
+        self.actions.next_pdf_page.triggered.connect(self.go_next_pdf_page)
+        self.actions.zoom_in_pdf.triggered.connect(self.zoom_in_pdf)
+        self.actions.zoom_out_pdf.triggered.connect(self.zoom_out_pdf)
+        self.actions.fit_pdf_width.triggered.connect(self.fit_pdf_width)
+        self.actions.insert_pdf_excerpt.triggered.connect(self.insert_pdf_excerpt)
+        self.actions.insert_pdf_citation.triggered.connect(self.insert_pdf_citation)
         self.actions.command_palette.triggered.connect(self.show_command_palette)
-        self.actions.focus_search.triggered.connect(self.search_dock.focus_search)
+        self.actions.focus_search.triggered.connect(self.focus_search_panel)
         self.actions.refresh_workspace.triggered.connect(self.refresh_workspace)
         self.actions.about.triggered.connect(self.show_about_dialog)
+        self.actions.toggle_main_toolbar.toggled.connect(self._set_main_toolbar_expanded)
 
         self.actions.toggle_notes.toggled.connect(self.note_dock.setVisible)
         self.actions.toggle_search.toggled.connect(self.search_dock.setVisible)
         self.actions.toggle_outline.toggled.connect(self.outline_dock.setVisible)
+        self.actions.toggle_search.triggered.connect(self._handle_search_visibility_action)
+        self.actions.toggle_outline.triggered.connect(self._handle_outline_visibility_action)
         self.note_dock.visibilityChanged.connect(self.actions.toggle_notes.setChecked)
         self.search_dock.visibilityChanged.connect(self.actions.toggle_search.setChecked)
         self.outline_dock.visibilityChanged.connect(self.actions.toggle_outline.setChecked)
@@ -143,12 +464,21 @@ class MainWindow(QMainWindow):
         self.note_dock.delete_note_requested.connect(self.delete_note)
         self.note_dock.reference_selected.connect(self.open_pdf_placeholder)
         self.note_dock.knowledge_selected.connect(self.open_knowledge_object)
+        self.cover_graph.node_selected.connect(self.open_knowledge_object)
+        self.cover_graph.add_planet_requested.connect(self.add_planet_from_graph)
+        self.cover_graph.delete_planet_requested.connect(self.delete_planet_from_graph)
+        self.cover_graph.add_star_requested.connect(self.add_star_from_graph)
+        self.cover_graph.delete_star_requested.connect(self.delete_star_from_graph)
+        self.cover_graph.assign_to_planet_requested.connect(self.assign_graph_node_to_planet)
         self.note_dock.assign_to_planet_requested.connect(self.show_planet_assignment_placeholder)
+        self.note_dock.star_map_requested.connect(lambda: self.show_star_map_cover(from_workbench=True))
+        self.note_dock.knowledge_model_changed.connect(self._sync_cover_graph)
         self.note_dock.new_note_requested.connect(self.create_new_note)
         self.note_dock.refresh_requested.connect(self.refresh_workspace)
         self.search_dock.result_selected.connect(self.open_note)
         self.outline_dock.heading_selected.connect(self.goto_line)
         self.outline_dock.pdf_selected.connect(self.open_pdf_placeholder)
+        self.outline_dock.annotation_delete_requested.connect(self.delete_pdf_annotation)
 
         self.workspace_tabs.currentChanged.connect(self._on_tab_changed)
         self.workspace_tabs.tabCloseRequested.connect(self._close_tab)
@@ -161,6 +491,8 @@ class MainWindow(QMainWindow):
 
     def eventFilter(self, watched: object, event: QEvent) -> bool:
         if self._is_save_shortcut_event(event):
+            if self.central_stack.currentWidget() is self.cover_page:
+                return False
             if event.type() == QEvent.Type.ShortcutOverride:
                 return True
             self.save_current_note()
@@ -205,6 +537,12 @@ class MainWindow(QMainWindow):
             return widget
         return self.editor
 
+    def _current_pdf_viewer(self) -> PdfViewerWidget | None:
+        widget = self.workspace_tabs.currentWidget()
+        if isinstance(widget, PdfViewerWidget):
+            return widget
+        return None
+
     def _current_note_path(self) -> Path | None:
         editor = self._current_editor()
         file_path = editor.get_document().file_path
@@ -217,6 +555,20 @@ class MainWindow(QMainWindow):
         self.editor = editor
         self.current_note_path = note_path
         self._connect_editor(editor)
+
+    def _add_pdf_tab(self, viewer: PdfViewerWidget, pdf_path: Path) -> None:
+        index = self.workspace_tabs.addTab(viewer, pdf_path.name)
+        self.workspace_tabs.setTabToolTip(index, str(pdf_path))
+        self.workspace_tabs.setCurrentIndex(index)
+        self._connect_pdf_viewer(viewer)
+
+    def _connect_pdf_viewer(self, viewer: PdfViewerWidget) -> None:
+        viewer.page_changed.connect(lambda page, target=viewer: self._on_pdf_page_changed(target, page))
+        viewer.zoom_changed.connect(lambda zoom, target=viewer: self._on_pdf_zoom_changed(target, zoom))
+        viewer.annotation_requested.connect(self._handle_pdf_annotation_request)
+        viewer.excerpt_insert_requested.connect(self._insert_markdown_into_current_note)
+        viewer.citation_insert_requested.connect(self._insert_markdown_into_current_note)
+        viewer.external_open_requested.connect(self._open_external_file)
 
     def _find_note_tab(self, note_path: Path) -> int:
         expected = str(note_path.resolve())
@@ -244,6 +596,7 @@ class MainWindow(QMainWindow):
     def _on_tab_changed(self, index: int) -> None:
         widget = self.workspace_tabs.widget(index)
         if isinstance(widget, NoteEditorWidget):
+            self._set_pdf_reading_mode(False)
             self.editor = widget
             self.current_note_path = self._current_note_path()
             if self.current_note_path is not None:
@@ -251,7 +604,12 @@ class MainWindow(QMainWindow):
             self._refresh_document_panels()
         elif widget is not None:
             self.current_note_path = None
-            self.status_label.setText("PDF 占位页")
+            if isinstance(widget, PdfViewerWidget):
+                self._set_pdf_reading_mode(True)
+                self.status_label.setText("PDF 阅读器")
+            else:
+                self._set_pdf_reading_mode(False)
+                self.status_label.setText("工作台页面")
 
     def _close_tab(self, index: int) -> None:
         widget = self.workspace_tabs.widget(index)
@@ -269,10 +627,54 @@ class MainWindow(QMainWindow):
         self.workspace_tabs.removeTab(index)
         widget.deleteLater()
 
+    def _set_pdf_reading_mode(self, enabled: bool) -> None:
+        if enabled:
+            if self._pre_pdf_dock_visibility is None:
+                self._pre_pdf_dock_visibility = (
+                    self.note_dock.isVisible(),
+                    self.search_dock.isVisible(),
+                    self.outline_dock.isVisible(),
+                )
+            self.note_dock.hide()
+            self.search_dock.hide()
+            self.outline_dock.hide()
+            return
+
+        previous = self._pre_pdf_dock_visibility
+        self._pre_pdf_dock_visibility = None
+        if previous is None:
+            return
+        note_visible, search_visible, outline_visible = previous
+        self.note_dock.setVisible(note_visible)
+        self.search_dock.setVisible(search_visible)
+        self.outline_dock.setVisible(outline_visible)
+        self._stabilize_right_docks()
+        self.actions.toggle_notes.setChecked(note_visible)
+        self.actions.toggle_search.setChecked(search_visible)
+        self.actions.toggle_outline.setChecked(outline_visible)
+
     def _load_workspace(self) -> None:
         self.note_dock.set_workspace(self.workspace_root)
         self.search_dock.set_workspace(self.workspace_root)
         self.outline_dock.set_workspace(self.workspace_root)
+        self._sync_workspace_pdfs_to_references()
+        self._refresh_knowledge_model_from_controller()
+        self._sync_cover_graph()
+
+    def _refresh_knowledge_model_from_controller(self) -> bool:
+        result = self.knowledge_controller.get_knowledge_model(self.workspace_root)
+        if not result.get("success"):
+            self.status_label.setText(str(result.get("message") or "知识模型加载失败"))
+            return False
+
+        data = result.get("data", {})
+        galaxy = data.get("galaxy") if isinstance(data, dict) else None
+        if not isinstance(galaxy, dict):
+            self.status_label.setText("知识模型数据格式异常")
+            return False
+
+        self.note_dock.set_knowledge_model(galaxy)
+        return True
 
     def _open_initial_note(self) -> None:
         inbox = self.notes_dir / "Inbox.md"
@@ -285,6 +687,7 @@ class MainWindow(QMainWindow):
         self._refresh_document_panels()
 
     def open_note(self, note_path: object) -> None:
+        self.show_workbench()
         path = Path(note_path)
         if not path.exists() or not path.is_file():
             self.status_label.setText("无法打开所选文件")
@@ -316,7 +719,7 @@ class MainWindow(QMainWindow):
         ):
             editor = NoteEditorWidget(self)
 
-        note_title = path.stem
+        note_title = title_for_path(self.workspace_root, path) or path.stem
         editor.load_document(
             text=text,
             note_id=path.stem,
@@ -336,6 +739,7 @@ class MainWindow(QMainWindow):
         self.outline_dock.set_object_context(self._selection_for_note(path))
 
     def create_new_note(self) -> None:
+        self.show_workbench()
         dialog = QInputDialog(self)
         dialog.setWindowTitle("新建笔记")
         dialog.setLabelText("笔记标题：")
@@ -374,6 +778,7 @@ class MainWindow(QMainWindow):
             current_path = self.notes_dir / f"{self._safe_filename(title)}.md"
 
         target_path = self._target_note_path_for_title(current_path, title)
+        old_path = current_path
         self.notes_dir.mkdir(parents=True, exist_ok=True)
         try:
             target_path.write_text(
@@ -387,11 +792,20 @@ class MainWindow(QMainWindow):
             self._show_message(QMessageBox.Icon.Critical, "保存失败", str(error))
             return
 
+        try:
+            if target_path.resolve() != old_path.resolve():
+                remove_title_for_path(self.workspace_root, old_path)
+            set_title_for_path(self.workspace_root, target_path, title)
+        except OSError:
+            pass
+
         self.current_note_path = target_path
         editor.get_document().bind_file_path(target_path)
         editor.mark_saved(file_mtime=target_path.stat().st_mtime)
         self._update_tab_title(editor)
         self.note_dock.refresh()
+        self._refresh_knowledge_model_from_controller()
+        self._sync_cover_graph()
         self.note_dock.select_note_path(target_path)
         self.search_dock.perform_search()
         self._refresh_document_panels()
@@ -447,7 +861,14 @@ class MainWindow(QMainWindow):
             self._show_message(QMessageBox.Icon.Critical, "删除失败", str(error))
             return
 
+        try:
+            remove_title_for_path(self.workspace_root, path)
+        except OSError:
+            pass
+
         self.note_dock.refresh()
+        self._refresh_knowledge_model_from_controller()
+        self._sync_cover_graph()
         self.search_dock.perform_search()
 
         if was_current_note:
@@ -467,8 +888,276 @@ class MainWindow(QMainWindow):
 
         self.status_label.setText(f"已删除: {path.name}")
 
+    def add_planet_from_graph(self, payload: object) -> None:
+        system_index = self._system_index_from_graph_payload(payload)
+        if not self._activate_workspace_from_graph_payload(payload):
+            return
+
+        title = self._prompt_text("新增行星", "行星名称：", "新行星")
+        if not title:
+            return
+
+        if not self.note_dock.add_planet(title):
+            self._show_message(QMessageBox.Icon.Information, "行星已存在", f"“{title}”已经在当前星系中。")
+            return
+
+        planet_key = self.note_dock.planet_assignment_key(title)
+        self._create_graph_star_note(title, planet_key)
+        self._refresh_cover_after_graph_change(system_index)
+        self.status_label.setText(f"已新增行星并创建同名星球: {title}")
+
+    def delete_planet_from_graph(self, payload: object) -> None:
+        system_index = self._system_index_from_graph_payload(payload)
+        if not self._activate_workspace_from_graph_payload(payload):
+            return
+
+        candidates = self.note_dock.visible_planets_for_actions()
+        if not candidates:
+            self._show_message(QMessageBox.Icon.Information, "暂无可删除行星", "当前星系中没有可删除的行星。")
+            return
+
+        selected = self._choose_keyed_item("删除行星", "选择要删除的行星：", candidates)
+        if selected is None:
+            return
+        planet_key, planet_title = selected
+
+        stars = self.note_dock.stars_for_planet(planet_key)
+        if not self._ask_confirmation(
+            "确认删除行星",
+            f"将删除行星“{planet_title}”。\n\n其下 {len(stars)} 个星球会先归入“未归类”，高轨行星会自动降轨补齐。",
+            confirm_text="删除行星",
+        ):
+            return
+
+        for star in stars:
+            self._assign_graph_node_to_planet(star, "Unassigned")
+
+        if not self.note_dock.delete_planet(planet_key):
+            self._show_message(QMessageBox.Icon.Warning, "删除失败", "该行星暂不能删除。")
+            return
+
+        self._refresh_cover_after_graph_change(system_index)
+        self.status_label.setText(f"已删除行星: {planet_title}")
+
+    def add_star_from_graph(self, payload: object) -> None:
+        system_index = self._system_index_from_graph_payload(payload)
+        if not self._activate_workspace_from_graph_payload(payload):
+            return
+
+        planet_title = self._planet_from_graph_payload(payload)
+        planet_key = self.note_dock.planet_assignment_key(planet_title)
+        title = self._prompt_text("新增星球", "星球名称：", "新星球")
+        if not title:
+            return
+
+        self._create_graph_star_note(title, planet_key)
+        self._refresh_cover_after_graph_change(system_index)
+        self.status_label.setText(f"已在“{self.note_dock.planet_display_title(planet_key)}”行星新增星球: {title}")
+
+    def delete_star_from_graph(self, payload: object) -> None:
+        system_index = self._system_index_from_graph_payload(payload)
+        if not self._activate_workspace_from_graph_payload(payload):
+            return
+
+        node = self._node_from_graph_payload(payload)
+        target = None
+        if node is not None and node.kind == KnowledgeObjectKind.STAR_NOTE:
+            target = node
+        else:
+            planet_title = self._planet_from_graph_payload(payload)
+            candidates = [
+                star
+                for star in self.note_dock.stars_for_planet(planet_title)
+                if star.kind == KnowledgeObjectKind.STAR_NOTE and star.path is not None
+            ]
+            if not candidates:
+                self._show_message(QMessageBox.Icon.Information, "暂无可删除星球", "该轨道下没有可从星图删除的 Markdown 星球。")
+                return
+            selected = self._choose_keyed_item(
+                "删除星球",
+                "选择要删除的星球：",
+                [(str(star.path), star.title) for star in candidates if star.path is not None],
+            )
+            if selected is None:
+                return
+            target_path = Path(selected[0])
+            target = next((star for star in candidates if star.path == target_path), None)
+
+        if target is None or target.path is None:
+            return
+        self.delete_note(target.path)
+        self._refresh_cover_after_graph_change(system_index)
+
+    def _create_graph_star_note(self, title: str, planet: str) -> Path | None:
+        safe_name = self._safe_filename(title)
+        self.notes_dir.mkdir(parents=True, exist_ok=True)
+        candidate = self.notes_dir / f"{safe_name}.md"
+        counter = 2
+        while candidate.exists():
+            candidate = self.notes_dir / f"{safe_name}-{counter}.md"
+            counter += 1
+
+        try:
+            candidate.write_text(f"# {title}\n\n", encoding="utf-8")
+            set_title_for_path(self.workspace_root, candidate, title)
+        except OSError as error:
+            self._show_message(QMessageBox.Icon.Critical, "创建星球失败", str(error))
+            return None
+
+        target = {
+            "object_kind": "note",
+            "object_key": candidate.stem,
+            "path": str(candidate),
+        }
+        self.show_planet_assignment_placeholder(target, planet)
+        self.note_dock.select_note_path(candidate)
+        return candidate
+
+    def _assign_graph_node_to_planet(self, node: KnowledgeGraphNode, planet: str) -> bool:
+        object_kind = "reference" if node.kind == KnowledgeObjectKind.STAR_REFERENCE else "note"
+        object_key = node.path.stem if node.path is not None else node.title
+        result = self.knowledge_controller.assign_object_to_planet(
+            self.workspace_root,
+            object_kind=object_kind,
+            object_key=object_key,
+            planet=planet,
+        )
+        if not result.get("success"):
+            self.status_label.setText(f"归类失败: {node.title}")
+            return False
+        if node.path is not None:
+            self.note_dock.assign_path_to_planet(node.path, planet)
+        return True
+
+    def assign_graph_node_to_planet(self, payload: object, planet_title: str) -> None:
+        node = self._node_from_graph_payload(payload)
+        if node is None:
+            return
+        if not self._activate_workspace_from_graph_payload(payload):
+            return
+
+        planet_key = self.note_dock.planet_assignment_key(planet_title)
+        target = {
+            "object_kind": "reference" if node.kind == KnowledgeObjectKind.STAR_REFERENCE else "note",
+            "object_key": node.path.stem if node.path is not None else node.title,
+            "path": str(node.path) if node.path is not None else "",
+        }
+        self.show_planet_assignment_placeholder(target, planet_key)
+
+    def _refresh_cover_after_graph_change(self, system_index: int | None) -> None:
+        was_cover = self.central_stack.currentWidget() is self.cover_page
+        was_system = self.cover_graph.current_layer == "cover_system"
+        self.note_dock.refresh()
+        self._refresh_knowledge_model_from_controller()
+        self._sync_cover_graph()
+        if was_cover and was_system and system_index is not None:
+            system_count = len(getattr(self.cover_graph, "_galaxy_systems", ()))
+            if system_count:
+                self.cover_graph.render_cover_system(min(system_index, system_count - 1))
+
+    def _activate_workspace_from_graph_payload(self, payload: object) -> bool:
+        workspace_root = self._workspace_root_from_graph_payload(payload)
+        if workspace_root is None:
+            return True
+        if workspace_root.resolve() != self.workspace_root.resolve():
+            self.switch_workspace(workspace_root)
+        return workspace_root.resolve() == self.workspace_root.resolve()
+
+    def _workspace_root_from_graph_payload(self, payload: object) -> Path | None:
+        if isinstance(payload, dict):
+            system_index = payload.get("system_index")
+            systems = getattr(self.cover_graph, "_galaxy_systems", ())
+            if isinstance(system_index, int) and 0 <= system_index < len(systems):
+                galaxy = systems[system_index][0]
+                return Path(galaxy.path) if galaxy.path is not None else None
+            node = payload.get("node")
+            if isinstance(node, KnowledgeGraphNode) and node.path is not None:
+                return Path(node.path)
+        return None
+
+    def _system_index_from_graph_payload(self, payload: object) -> int | None:
+        if isinstance(payload, dict) and isinstance(payload.get("system_index"), int):
+            return int(payload["system_index"])
+        return None
+
+    def _planet_from_graph_payload(self, payload: object) -> str:
+        if isinstance(payload, dict):
+            planet = str(payload.get("planet") or "").strip()
+            if planet:
+                return planet
+            node = payload.get("node")
+            if isinstance(node, KnowledgeGraphNode):
+                return node.planet or node.title
+        return "Unassigned"
+
+    def _node_from_graph_payload(self, payload: object) -> KnowledgeGraphNode | None:
+        if isinstance(payload, dict) and isinstance(payload.get("node"), KnowledgeGraphNode):
+            return payload["node"]
+        return None
+
+    def _prompt_text(self, title: str, label: str, default: str = "") -> str:
+        dialog = QInputDialog(self)
+        dialog.setWindowTitle(title)
+        dialog.setLabelText(label)
+        dialog.setTextValue(default)
+        dialog.setStyleSheet(build_app_stylesheet())
+        dialog.resize(360, 160)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return ""
+        return dialog.textValue().strip()
+
+    def _choose_keyed_item(
+        self,
+        title: str,
+        label: str,
+        items: list[tuple[str, str]],
+    ) -> tuple[str, str] | None:
+        if not items:
+            return None
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle(title)
+        dialog.setStyleSheet(build_app_stylesheet())
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(10)
+        layout.addWidget(QLabel(label, dialog))
+
+        list_widget = QListWidget(dialog)
+        for key, text in items:
+            item = QListWidgetItem(text)
+            item.setData(Qt.ItemDataRole.UserRole, key)
+            list_widget.addItem(item)
+        list_widget.setCurrentRow(0)
+        layout.addWidget(list_widget)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            dialog,
+        )
+        ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        cancel_button = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        if ok_button is not None:
+            ok_button.setText("确定")
+        if cancel_button is not None:
+            cancel_button.setText("取消")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        list_widget.itemDoubleClicked.connect(lambda _item: dialog.accept())
+        layout.addWidget(buttons)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+
+        current = list_widget.currentItem()
+        if current is None:
+            return None
+        key = str(current.data(Qt.ItemDataRole.UserRole) or "")
+        return key, current.text()
+
     def refresh_workspace(self) -> None:
         self._load_workspace()
+        self._sync_cover_graph()
         self._refresh_document_panels()
         self.status_label.setText("工作区已刷新")
 
@@ -481,11 +1170,163 @@ class MainWindow(QMainWindow):
         if selected is None:
             return
 
+        self.switch_workspace(selected)
+
+    def choose_workspace_store_root(self) -> None:
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "选择工作区总目录",
+            str(self.workspace_store_root),
+        )
+        if not selected:
+            return
+
+        self.workspace_store_root = Path(selected).expanduser().resolve()
+        self._sync_cover_graph()
         self._show_message(
             QMessageBox.Icon.Information,
-            "工作区选择",
-            f"已选择工作区：{selected}\n\n当前 UI 只负责路径选择，实际切换将在 controller 接口稳定后接入。",
+            "工作区总目录已设置",
+            f"当前工作区总目录：\n{self.workspace_store_root}\n\n"
+            "此后新建的工作区都会创建在这个目录下，星图也会从这里扫描工作区。",
         )
+
+    def create_new_workspace(self) -> None:
+        name, accepted = QInputDialog.getText(self, "新建工作区", "工作区名称：")
+        safe_name = self._safe_filename(name)
+        if not accepted or not safe_name:
+            return
+
+        self.workspace_store_root.mkdir(parents=True, exist_ok=True)
+        target = self.workspace_store_root / safe_name
+        if target.exists() and any(target.iterdir()):
+            self._show_message(
+                QMessageBox.Icon.Warning,
+                "工作区已存在",
+                "该目录已存在且不是空目录。请选择其他名称，或通过星图选择已有工作区。",
+            )
+            return
+
+        self.switch_workspace(target)
+        self._sync_cover_graph()
+
+    def delete_workspace_from_store(self) -> None:
+        candidates = self._workspace_candidates()
+        if not candidates:
+            self._show_message(
+                QMessageBox.Icon.Information,
+                "暂无可删除工作区",
+                "当前工作区总目录下还没有可删除的 Agni 工作区。",
+            )
+            return
+
+        selected = self._choose_keyed_item(
+            "删除工作区",
+            "选择要删除的工作区：",
+            [(str(path), path.name) for path in candidates],
+        )
+        if selected is None:
+            return
+
+        target = Path(selected[0])
+        if target.resolve() == self.workspace_root.resolve():
+            self._show_message(
+                QMessageBox.Icon.Warning,
+                "无法删除当前工作区",
+                "请先切换到其他工作区，再删除当前正在使用的工作区。",
+            )
+            return
+
+        if not self._is_workspace_in_store(target):
+            self._show_message(
+                QMessageBox.Icon.Warning,
+                "删除范围无效",
+                "只能删除当前工作区总目录下的 Agni 工作区。",
+            )
+            return
+
+        if not self._ask_confirmation(
+            "确认删除工作区",
+            f"将永久删除该工作区目录及其中所有文件：\n{target}\n\n"
+            "该操作不可撤销。",
+            confirm_text="删除",
+        ):
+            return
+
+        try:
+            shutil.rmtree(target)
+        except OSError as error:
+            self._show_message(QMessageBox.Icon.Critical, "删除工作区失败", str(error))
+            return
+
+        self._sync_cover_graph()
+        self._show_message(
+            QMessageBox.Icon.Information,
+            "工作区已删除",
+            f"已删除：{target.name}\n\n星图已同步刷新。",
+        )
+
+    def _is_workspace_in_store(self, workspace_root: Path) -> bool:
+        try:
+            workspace_root.resolve().relative_to(self.workspace_store_root.resolve())
+        except ValueError:
+            return False
+        return workspace_root.resolve() != self.workspace_store_root.resolve()
+
+    def switch_workspace(self, workspace_path: str | Path) -> None:
+        selected = Path(workspace_path).expanduser()
+        if not self._maybe_save_note_tabs_before_workspace_switch():
+            self.status_label.setText("已取消切换工作区")
+            return
+
+        result = self.workspace_controller.open_workspace(selected)
+        if not result.get("success"):
+            self._show_message(
+                QMessageBox.Icon.Warning,
+                "工作区打开失败",
+                str(result.get("message") or "WorkspaceController.open_workspace() 未能打开该目录。"),
+            )
+            return
+
+        data = result.get("data", {})
+        workspace_context = data.get("workspace_context") if isinstance(data, dict) else None
+        workspace_root = data.get("workspace_root") if isinstance(data, dict) else None
+        new_root = Path(workspace_root or selected).resolve()
+
+        self.workspace_root = new_root
+        self.notes_dir = new_root / "notes"
+        self.app_context.workspace_root = new_root
+        if workspace_context is not None and hasattr(workspace_context, "database_path"):
+            self.app_context.db_path = Path(workspace_context.database_path)
+
+        self.setWindowTitle(f"Agni - {self.workspace_root.name}")
+        self.workspace_label.setText(f"工作区: {self.workspace_root}")
+        self._reset_tabs_for_workspace()
+        self._load_workspace()
+        self._open_initial_note()
+        self.show_star_map_cover()
+        self.status_label.setText(f"已切换工作区: {self.workspace_root.name}")
+
+    def _maybe_save_note_tabs_before_workspace_switch(self) -> bool:
+        for index in range(self.workspace_tabs.count()):
+            widget = self.workspace_tabs.widget(index)
+            if isinstance(widget, NoteEditorWidget) and not widget.maybe_save_before_close():
+                self.workspace_tabs.setCurrentIndex(index)
+                return False
+        return True
+
+    def _reset_tabs_for_workspace(self) -> None:
+        while self.workspace_tabs.count():
+            widget = self.workspace_tabs.widget(0)
+            self.workspace_tabs.removeTab(0)
+            widget.deleteLater()
+
+        self.current_note_path = None
+        self.editor = NoteEditorWidget(self)
+        self.editor.load_empty_document(title="未命名笔记")
+        self.workspace_tabs.addTab(self.editor, "未命名")
+        self.workspace_tabs.setTabToolTip(0, "未保存笔记")
+        self.workspace_tabs.setCurrentIndex(0)
+        self._connect_editor(self.editor)
 
     def goto_line(self, line_number: int) -> None:
         editor = self._current_editor()
@@ -498,20 +1339,39 @@ class MainWindow(QMainWindow):
             CommandItem("打开工作区", self.show_workspace_picker, "选择工作区目录"),
             CommandItem("保存当前笔记", self.save_current_note, "保存当前标签页中的 Markdown"),
             CommandItem("删除当前笔记", self.delete_current_note, "删除当前工作区 notes 下的 Markdown"),
+            CommandItem("打开 PDF", self.open_pdf_from_dialog, "从 references 或 attachments 打开 PDF 阅读器"),
+            CommandItem("PDF 摘录到笔记", self.insert_pdf_excerpt, "把 PDF 当前选区插入 Markdown 笔记"),
+            CommandItem("插入 PDF 引用", self.insert_pdf_citation, "把 PDF citation key 插入当前笔记"),
             CommandItem("打开知识模型", self.focus_knowledge_model, "聚焦星系-行星-星球-卫星模型树"),
-            CommandItem("聚焦搜索", self.search_dock.focus_search, "跳转到右侧搜索面板"),
+            CommandItem("聚焦搜索", self.focus_search_panel, "跳转到右侧搜索与反链面板"),
+            CommandItem("聚焦文档导航", self.focus_outline_panel, "跳转到右侧大纲、PDF、元数据与卫星面板"),
             CommandItem("刷新工作区", self.refresh_workspace, "重新扫描工作区资源"),
         ]
         dialog = CommandPaletteDialog(commands, self)
         dialog.exec()
 
     def focus_knowledge_model(self) -> None:
-        self.note_dock.show()
-        self.note_dock.raise_()
-        self.note_dock.tabs.setCurrentWidget(self.note_dock.model_page)
+        self.show_star_map_cover(from_workbench=True)
         self.status_label.setText("已聚焦知识模型")
 
+    def focus_search_panel(self) -> None:
+        self.show_workbench()
+        self.actions.toggle_search.setChecked(True)
+        self.search_dock.show()
+        self._stabilize_right_docks("search")
+        self.search_dock.focus_search()
+
+    def focus_outline_panel(self) -> None:
+        self.show_workbench()
+        self.actions.toggle_outline.setChecked(True)
+        self.outline_dock.show()
+        self._stabilize_right_docks("outline")
+        self.outline_dock.focus_default()
+
     def open_knowledge_object(self, selection: KnowledgeSelection) -> None:
+        if selection.path is not None and not self._ensure_workspace_for_path(selection.path):
+            return
+
         if selection.kind == KnowledgeObjectKind.STAR_NOTE and selection.path is not None:
             self.open_note(selection.path)
             self.outline_dock.set_object_context(selection)
@@ -535,7 +1395,26 @@ class MainWindow(QMainWindow):
         self.open_knowledge_dashboard(selection)
         self.outline_dock.set_object_context(selection)
 
+    def _ensure_workspace_for_path(self, path: Path) -> bool:
+        workspace_root = self._workspace_root_for_path(path)
+        if workspace_root is None or workspace_root.resolve() == self.workspace_root.resolve():
+            return True
+
+        self.switch_workspace(workspace_root)
+        return self.workspace_root.resolve() == workspace_root.resolve()
+
+    def _workspace_root_for_path(self, path: Path) -> Path | None:
+        resolved_path = path.resolve()
+        for workspace_root in self._workspace_candidates():
+            try:
+                resolved_path.relative_to(workspace_root.resolve())
+            except ValueError:
+                continue
+            return workspace_root
+        return None
+
     def open_knowledge_dashboard(self, selection: KnowledgeSelection) -> None:
+        self.show_workbench()
         tab_key = f"knowledge:{selection.kind.value}:{selection.title}"
         for index in range(self.workspace_tabs.count()):
             if self.workspace_tabs.tabToolTip(index) == tab_key:
@@ -551,9 +1430,56 @@ class MainWindow(QMainWindow):
         self.workspace_tabs.setTabToolTip(index, tab_key)
         self.workspace_tabs.setCurrentIndex(index)
 
+    def _normalize_assignment_target(self, target: object) -> dict[str, str]:
+        if isinstance(target, dict):
+            object_kind = str(target.get("object_kind") or "note")
+            object_key = str(target.get("object_key") or "").strip()
+            path_value = target.get("path")
+            if not object_key and path_value:
+                object_key = Path(str(path_value)).stem
+            return {
+                "object_kind": object_kind,
+                "object_key": object_key,
+                "path": str(path_value or ""),
+            }
+
+        target_path = Path(target)
+        return {
+            "object_kind": "note" if target_path.suffix.lower() == ".md" else "reference",
+            "object_key": target_path.stem,
+            "path": str(target_path),
+        }
+
     def show_planet_assignment_placeholder(self, path: object, planet: str) -> None:
+        target = self._normalize_assignment_target(path)
+        result = self.knowledge_controller.assign_object_to_planet(
+            self.workspace_root,
+            object_kind=target["object_kind"],
+            object_key=target["object_key"],
+            planet=planet,
+        )
+        if not result.get("success"):
+            self._show_message(
+                QMessageBox.Icon.Warning,
+                "知识对象归类失败",
+                str(result.get("message") or "后端未能保存归类结果。"),
+            )
+            return
+
+        if target["path"]:
+            self.note_dock.assign_path_to_planet(target["path"], planet)
+        self._refresh_knowledge_model_from_controller()
+        self._sync_cover_graph()
+        self.note_dock.tabs.setCurrentWidget(self.note_dock.model_page)
+        planet_title = self.note_dock.planet_display_title(planet)
+        self.status_label.setText(
+            f"已归入 {planet_title} 行星: {target['object_kind']}:{target['object_key']}"
+        )
+        return
+
         target_path = Path(path)
         self.note_dock.assign_path_to_planet(target_path, planet)
+        self._sync_cover_graph()
         self.note_dock.tabs.setCurrentWidget(self.note_dock.model_page)
         self.status_label.setText(f"已归入 {planet} 行星: {target_path.name}")
         self._show_message(
@@ -563,40 +1489,518 @@ class MainWindow(QMainWindow):
             "当前归类结果保存在本次界面会话中，实际持久化等待 controller/service 接口接入。",
         )
 
+    def open_pdf_from_dialog(self) -> None:
+        start_dir = self._default_pdf_folder()
+        selected, _filter = QFileDialog.getOpenFileName(
+            self,
+            "打开 PDF",
+            str(start_dir),
+            "PDF Files (*.pdf);;All Files (*.*)",
+        )
+        if not selected:
+            return
+
+        prepared_path = self._prepare_pdf_path_for_open(Path(selected))
+        if prepared_path is not None:
+            self.open_pdf_placeholder(prepared_path)
+
+    def go_previous_pdf_page(self) -> None:
+        viewer = self._current_pdf_viewer()
+        if viewer is not None:
+            viewer.go_previous_page()
+        else:
+            self.status_label.setText("当前标签页不是 PDF")
+
+    def go_next_pdf_page(self) -> None:
+        viewer = self._current_pdf_viewer()
+        if viewer is not None:
+            viewer.go_next_page()
+        else:
+            self.status_label.setText("当前标签页不是 PDF")
+
+    def zoom_in_pdf(self) -> None:
+        viewer = self._current_pdf_viewer()
+        if viewer is not None:
+            viewer.zoom_in()
+        else:
+            self.status_label.setText("当前标签页不是 PDF")
+
+    def zoom_out_pdf(self) -> None:
+        viewer = self._current_pdf_viewer()
+        if viewer is not None:
+            viewer.zoom_out()
+        else:
+            self.status_label.setText("当前标签页不是 PDF")
+
+    def fit_pdf_width(self) -> None:
+        viewer = self._current_pdf_viewer()
+        if viewer is not None:
+            viewer.fit_width()
+        else:
+            self.status_label.setText("当前标签页不是 PDF")
+
+    def insert_pdf_excerpt(self) -> None:
+        viewer = self._current_pdf_viewer()
+        if viewer is not None:
+            viewer.request_excerpt_insert()
+        else:
+            self.status_label.setText("当前标签页不是 PDF")
+
+    def insert_pdf_citation(self) -> None:
+        viewer = self._current_pdf_viewer()
+        if viewer is not None:
+            viewer.request_citation_insert()
+        else:
+            self.status_label.setText("当前标签页不是 PDF")
+
     def open_pdf_placeholder(self, pdf_path: object) -> None:
+        self.show_workbench()
         path = Path(pdf_path)
+        open_result = self.pdf_controller.open_pdf(self.workspace_root, path)
+        if not open_result.get("success"):
+            self._show_message(
+                QMessageBox.Icon.Warning,
+                "PDF 打开失败",
+                (
+                    f"{open_result.get('message')}\n\n"
+                    "当前后端只允许打开工作区 references/ 或 attachments/ 目录下的 PDF。"
+                ),
+            )
+            return
+
+        data = open_result.get("data", {})
+        pdf_data = data.get("pdf") if isinstance(data, dict) else None
+        if not isinstance(pdf_data, dict):
+            self._show_message(
+                QMessageBox.Icon.Warning,
+                "PDF 打开失败",
+                "PdfController.open_pdf() 返回的数据格式异常。",
+            )
+            return
+        path = Path(str(pdf_data.get("file_path") or path))
+        reference_id = self._ensure_pdf_reference_for_path(path)
+        if reference_id:
+            self._refresh_knowledge_model_from_controller()
+            self._sync_cover_graph()
+
         for index in range(self.workspace_tabs.count()):
             if self.workspace_tabs.tabToolTip(index) == str(path):
                 self.workspace_tabs.setCurrentIndex(index)
                 self.outline_dock.set_object_context(
-                    KnowledgeSelection(
+                    self._selection_for_pdf_reference(path=path, reference_id=reference_id)
+                    if reference_id
+                    else KnowledgeSelection(
                         kind=KnowledgeObjectKind.STAR_REFERENCE,
                         title=path.name,
                         path=path,
-                        description="文献或附件星球。PDF 阅读、批注和摘录会在后续服务接口稳定后接入。",
+                        description="文献或附件星球。可在 PDF 阅读器中翻页、划词摘录、插入引用并保存批注。",
                         tags=("文献", path.suffix.lower().lstrip(".")),
                     )
                 )
                 return
 
-        label = QLabel(
-            f"PDF 预览占位\n\n{path.name}\n\n后续可在这里接入 PDF 预览、页码跳转和引用插入。",
-            self,
+        viewer = PdfViewerWidget(self)
+        viewer.load_pdf(
+            path,
+            page_count=pdf_data.get("page_count"),
+            reference_key=reference_id or self._guess_reference_key(path),
         )
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        label.setObjectName("pdf_placeholder")
-        index = self.workspace_tabs.addTab(label, path.name)
-        self.workspace_tabs.setTabToolTip(index, str(path))
-        self.workspace_tabs.setCurrentIndex(index)
+        viewer.show_pdf_metadata(pdf_data)
+        self._add_pdf_tab(viewer, path)
         self.outline_dock.set_object_context(
-            KnowledgeSelection(
-                kind=KnowledgeObjectKind.STAR_REFERENCE,
-                title=path.name,
-                path=path,
-                description="文献或附件星球。PDF 阅读、批注和摘录会在后续服务接口稳定后接入。",
-                tags=("文献", path.suffix.lower().lstrip(".")),
+            self._selection_for_pdf_reference(path=path, reference_id=reference_id)
+            if reference_id
+            else KnowledgeSelection(
+                    kind=KnowledgeObjectKind.STAR_REFERENCE,
+                    title=path.name,
+                    path=path,
+                    description="文献或附件星球。可在 PDF 阅读器中翻页、划词摘录、插入引用并保存批注。",
+                    tags=("文献", path.suffix.lower().lstrip(".")),
             )
         )
+        self.status_label.setText(f"已打开 PDF 阅读器: {path.name}")
+
+    def _default_pdf_folder(self) -> Path:
+        for folder_name in ("references", "attachments"):
+            folder = self.workspace_root / folder_name
+            if folder.exists():
+                return folder
+        return self.workspace_root
+
+    def _prepare_pdf_path_for_open(self, pdf_path: Path) -> Path | None:
+        if self._is_workspace_pdf_path(pdf_path):
+            return pdf_path
+
+        if pdf_path.suffix.lower() != ".pdf" or not pdf_path.exists() or not pdf_path.is_file():
+            self._show_message(QMessageBox.Icon.Warning, "PDF 打开失败", "请选择一个存在的 .pdf 文件。")
+            return None
+
+        if not self._ask_confirmation(
+            "导入 PDF 到工作区",
+            f"该 PDF 不在当前工作区 references/ 或 attachments/ 下：\n{pdf_path}\n\n"
+            "需要先复制到当前工作区 attachments/ 后才能由 PdfController 打开。",
+            confirm_text="导入并打开",
+        ):
+            return None
+
+        try:
+            return self._copy_pdf_to_attachments(pdf_path)
+        except OSError as error:
+            self._show_message(QMessageBox.Icon.Critical, "PDF 导入失败", str(error))
+            return None
+
+    def _is_workspace_pdf_path(self, pdf_path: Path) -> bool:
+        try:
+            relative = pdf_path.resolve().relative_to(self.workspace_root.resolve())
+        except ValueError:
+            return False
+        return bool(relative.parts) and relative.parts[0] in {"attachments", "references"}
+
+    def _copy_pdf_to_attachments(self, pdf_path: Path) -> Path:
+        attachments_dir = self.workspace_root / "attachments"
+        attachments_dir.mkdir(parents=True, exist_ok=True)
+        target = attachments_dir / pdf_path.name
+        counter = 2
+        while target.exists() and target.resolve() != pdf_path.resolve():
+            target = attachments_dir / f"{pdf_path.stem}-{counter}{pdf_path.suffix}"
+            counter += 1
+        if target.resolve() != pdf_path.resolve():
+            shutil.copy2(pdf_path, target)
+        return target
+
+    def _load_pdf_document_page_count(self, pdf_path: Path) -> int | None:
+        # UI-only adapter point: replace with pdf_controller.open_pdf(path) later.
+        if not pdf_path.exists():
+            return None
+        return 1
+
+    def _guess_reference_key(self, pdf_path: Path) -> str:
+        return pdf_path.stem.replace(" ", "_")
+
+    def _ensure_pdf_reference_for_path(
+        self,
+        pdf_path: Path,
+        *,
+        preferred_reference_id: str | None = None,
+        silent: bool = False,
+    ) -> str | None:
+        if not pdf_path.exists() or pdf_path.suffix.lower() != ".pdf":
+            return None
+
+        resolved_pdf = pdf_path.expanduser().resolve()
+        existing_id = self._reference_id_for_pdf_path(resolved_pdf)
+        if existing_id:
+            self._bind_reference_pdf_if_needed(existing_id, resolved_pdf, silent=silent)
+            return existing_id
+
+        base_reference_id = (preferred_reference_id or self._guess_reference_key(resolved_pdf)).strip()
+        existing_by_id = self.reference_service.get_reference(self.workspace_root, base_reference_id)
+        if existing_by_id.get("success"):
+            data = existing_by_id.get("data", {})
+            reference = data.get("reference", {}) if isinstance(data, dict) else {}
+            if isinstance(reference, dict) and not reference.get("pdf_path"):
+                if self._bind_reference_pdf_if_needed(base_reference_id, resolved_pdf, silent=silent):
+                    return base_reference_id
+
+        reference_id = self._unique_reference_id(base_reference_id)
+        create_result = self.reference_service.create_reference(
+            self.workspace_root,
+            {
+                "reference_id": reference_id,
+                "title": resolved_pdf.stem,
+                "authors": (),
+                "year": None,
+                "entry_type": "pdf",
+                "source_format": "manual",
+                "source_path": str(resolved_pdf),
+            },
+        )
+        if not create_result.get("success"):
+            if not silent:
+                self._show_message(
+                    QMessageBox.Icon.Warning,
+                    "文献星球创建失败",
+                    str(create_result.get("message") or "无法为该 PDF 创建文献记录。"),
+                )
+            return None
+
+        bind_result = self.reference_service.bind_pdf(
+            self.workspace_root,
+            reference_id,
+            resolved_pdf,
+        )
+        if not bind_result.get("success"):
+            if not silent:
+                self._show_message(
+                    QMessageBox.Icon.Warning,
+                    "PDF 绑定文献失败",
+                    str(bind_result.get("message") or "无法把 PDF 绑定到文献记录。"),
+                )
+            return None
+
+        if not silent:
+            self.status_label.setText(f"已登记 PDF 文献星球: {resolved_pdf.stem}")
+        return reference_id
+
+    def _bind_reference_pdf_if_needed(
+        self,
+        reference_id: str,
+        pdf_path: Path,
+        *,
+        silent: bool = False,
+    ) -> bool:
+        existing = self.reference_service.get_reference(self.workspace_root, reference_id)
+        if not existing.get("success"):
+            return False
+
+        data = existing.get("data", {})
+        reference = data.get("reference", {}) if isinstance(data, dict) else {}
+        stored_pdf = reference.get("pdf_path") if isinstance(reference, dict) else None
+        if stored_pdf:
+            try:
+                if Path(str(stored_pdf)).expanduser().resolve() == pdf_path.expanduser().resolve():
+                    return True
+            except OSError:
+                pass
+
+        bind_result = self.reference_service.bind_pdf(self.workspace_root, reference_id, pdf_path)
+        if not bind_result.get("success"):
+            if not silent:
+                self._show_message(
+                    QMessageBox.Icon.Warning,
+                    "PDF 绑定文献失败",
+                    str(bind_result.get("message") or "无法把 PDF 绑定到文献记录。"),
+                )
+            return False
+        return True
+
+    def _sync_workspace_pdfs_to_references(self) -> None:
+        created_count = 0
+        for pdf_path in self._iter_workspace_pdf_paths():
+            before = self._reference_id_for_pdf_path(pdf_path)
+            reference_id = self._ensure_pdf_reference_for_path(pdf_path, silent=True)
+            if reference_id and before is None:
+                created_count += 1
+        if created_count:
+            self.status_label.setText(f"已同步 {created_count} 个 PDF 文献星球")
+
+    def _iter_workspace_pdf_paths(self) -> tuple[Path, ...]:
+        pdfs: list[Path] = []
+        for folder_name in ("references", "attachments"):
+            folder = self.workspace_root / folder_name
+            if folder.exists():
+                pdfs.extend(path for path in folder.rglob("*.pdf") if path.is_file())
+        return tuple(sorted(pdfs, key=lambda item: str(item).lower()))
+
+    def _reference_id_for_pdf_path(self, pdf_path: Path) -> str | None:
+        list_result = self.reference_service.list_references(self.workspace_root)
+        if not list_result.get("success"):
+            return None
+
+        data = list_result.get("data", {})
+        references = data.get("references", ()) if isinstance(data, dict) else ()
+        resolved_pdf = pdf_path.expanduser().resolve()
+        target_key = self._pdf_identity_key(resolved_pdf)
+        for reference in references:
+            if not isinstance(reference, dict):
+                continue
+            stored_pdf = reference.get("pdf_path")
+            if not stored_pdf:
+                continue
+            try:
+                if Path(str(stored_pdf)).expanduser().resolve() == resolved_pdf:
+                    return str(reference.get("reference_id") or "")
+            except OSError:
+                pass
+            if target_key and self._pdf_identity_key(Path(str(stored_pdf))) == target_key:
+                return str(reference.get("reference_id") or "")
+        return None
+
+    def _pdf_identity_key(self, pdf_path: Path) -> tuple[str, ...] | None:
+        parts = tuple(pdf_path.parts)
+        lowered_parts = tuple(part.lower() for part in parts)
+        for folder_name in ("references", "attachments"):
+            if folder_name in lowered_parts:
+                index = lowered_parts.index(folder_name)
+                return tuple(part.lower() for part in parts[index:])
+        if pdf_path.suffix.lower() == ".pdf":
+            return (pdf_path.name.lower(),)
+        return None
+
+    def _unique_reference_id(self, reference_id: str) -> str:
+        base = reference_id or "reference"
+        candidate = base
+        suffix = 2
+        while self.reference_service.get_reference(self.workspace_root, candidate).get("success"):
+            candidate = f"{base}-{suffix}"
+            suffix += 1
+        return candidate
+
+    def _on_pdf_page_changed(self, viewer: PdfViewerWidget, page_number: int) -> None:
+        if self.workspace_tabs.currentWidget() is viewer:
+            self.status_label.setText(f"PDF 第 {page_number} 页")
+
+    def _on_pdf_zoom_changed(self, viewer: PdfViewerWidget, zoom_factor: float) -> None:
+        if self.workspace_tabs.currentWidget() is viewer:
+            self.status_label.setText(f"PDF 缩放 {int(zoom_factor * 100)}%")
+
+    def _handle_pdf_annotation_request(self, draft: object) -> None:
+        pdf_path = Path(getattr(draft, "pdf_path", ""))
+        text = str(getattr(draft, "text", "") or "").strip()
+        page_number = int(getattr(draft, "page_number", 1) or 1)
+        if not pdf_path.exists() or not text:
+            self.status_label.setText("PDF 批注缺少文件或文字内容")
+            return
+
+        reference_id = self._ensure_pdf_reference_for_annotation(draft)
+        if not reference_id:
+            return
+
+        result = self.pdf_controller.create_annotation(
+            self.workspace_root,
+            reference_id,
+            {
+                "text": text,
+                "page_number": page_number,
+                "page_label": str(page_number),
+                "rects": tuple(getattr(draft, "rects", ()) or ()),
+                "comment": "",
+                "color": "yellow",
+            },
+        )
+        if not result.get("success"):
+            self._show_message(
+                QMessageBox.Icon.Warning,
+                "PDF 批注保存失败",
+                str(result.get("message") or "PdfController.create_annotation() 未能保存批注。"),
+            )
+            return
+
+        self._refresh_knowledge_model_from_controller()
+        self._sync_cover_graph()
+        self.outline_dock.show()
+        self.actions.toggle_outline.setChecked(True)
+        self.outline_dock.set_object_context(
+            self._selection_for_pdf_reference(path=pdf_path, reference_id=reference_id)
+        )
+        self.outline_dock.focus_satellite_page()
+        self._stabilize_right_docks(active="outline")
+        self.status_label.setText(f"已保存 PDF 批注: {reference_id} 第 {page_number} 页")
+
+    def delete_pdf_annotation(self, annotation_id: str) -> None:
+        annotation_id = str(annotation_id or "").strip()
+        if not annotation_id:
+            return
+        if not self._ask_confirmation(
+            "删除 PDF 批注",
+            "确定删除这条 PDF 批注吗？删除后对应卫星也会从文档导航和星图中移除。",
+            confirm_text="删除批注",
+        ):
+            return
+
+        result = self.pdf_controller.delete_annotation(self.workspace_root, annotation_id)
+        if not result.get("success"):
+            self._show_message(
+                QMessageBox.Icon.Warning,
+                "PDF 批注删除失败",
+                str(result.get("message") or "PdfController.delete_annotation() 未能删除批注。"),
+            )
+            return
+
+        data = result.get("data", {})
+        annotation = data.get("annotation", {}) if isinstance(data, dict) else {}
+        reference_id = str(annotation.get("reference_id") or "")
+        pdf_path = Path(str(annotation.get("pdf_path") or ""))
+        if not pdf_path.is_absolute():
+            pdf_path = self.workspace_root / pdf_path
+
+        self._refresh_knowledge_model_from_controller()
+        self._sync_cover_graph()
+        if reference_id and pdf_path.exists():
+            self.outline_dock.set_object_context(
+                self._selection_for_pdf_reference(path=pdf_path, reference_id=reference_id)
+            )
+            self.outline_dock.focus_satellite_page()
+        self.status_label.setText("已删除 PDF 批注")
+
+    def _selection_for_pdf_reference(
+        self,
+        *,
+        path: Path,
+        reference_id: str,
+    ) -> KnowledgeSelection:
+        satellites: list[SatelliteItem] = []
+        result = self.pdf_controller.list_reference_annotations(self.workspace_root, reference_id)
+        if result.get("success"):
+            annotations = result.get("data", {}).get("annotations", ())
+            if isinstance(annotations, tuple | list):
+                for item in annotations:
+                    if not isinstance(item, dict):
+                        continue
+                    page_label = str(item.get("page_label") or item.get("page_number") or "")
+                    text = str(item.get("comment") or item.get("text") or "").strip()
+                    title = f"PDF 批注 p.{page_label}" if page_label else "PDF 批注"
+                    satellites.append(
+                        SatelliteItem(
+                            title=title,
+                            kind="annotation",
+                            host_title=path.stem,
+                            preview=text,
+                            object_id=str(item.get("annotation_id") or ""),
+                        )
+                    )
+
+        return KnowledgeSelection(
+            kind=KnowledgeObjectKind.STAR_REFERENCE,
+            title=path.stem,
+            path=path,
+            description=(
+                "文献或附件星球。PDF 批注会作为卫星显示在这里；"
+                "可在 PDF 阅读器中划词、摘录、批注或插入引用。"
+            ),
+            tags=("文献", path.suffix.lower().lstrip(".")),
+            satellites=tuple(satellites),
+        )
+
+    def _insert_markdown_into_current_note(self, markdown: str) -> None:
+        editor = self._target_editor_for_pdf_insert()
+        editor.insert_text_at_cursor(markdown)
+        self.workspace_tabs.setCurrentWidget(editor)
+        editor.focus_editor()
+        self._update_tab_title(editor)
+        self._refresh_document_panels()
+        self.status_label.setText("已插入 Markdown 内容")
+
+    def _target_editor_for_pdf_insert(self) -> NoteEditorWidget:
+        widget = self.workspace_tabs.currentWidget()
+        if isinstance(widget, NoteEditorWidget):
+            self.editor = widget
+            return widget
+
+        if isinstance(self.editor, NoteEditorWidget) and self.workspace_tabs.indexOf(self.editor) >= 0:
+            return self.editor
+
+        for index in range(self.workspace_tabs.count()):
+            candidate = self.workspace_tabs.widget(index)
+            if isinstance(candidate, NoteEditorWidget):
+                self.editor = candidate
+                return candidate
+
+        editor = NoteEditorWidget(self)
+        editor.load_empty_document(title="PDF 摘录")
+        self._add_note_tab(editor, "PDF 摘录", None)
+        return editor
+
+    def _ensure_pdf_reference_for_annotation(self, draft: object) -> str | None:
+        pdf_path = Path(getattr(draft, "pdf_path", ""))
+        reference_id = str(getattr(draft, "citation_key", "") or "").strip()
+        return self._ensure_pdf_reference_for_path(
+            pdf_path,
+            preferred_reference_id=reference_id or None,
+        )
+
+    def _open_external_file(self, path: object) -> None:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(path))))
 
     def show_about_dialog(self) -> None:
         self._show_message(
@@ -678,23 +2082,25 @@ class MainWindow(QMainWindow):
         self.search_dock.update_backlinks(self.current_note_path, title)
 
     def _selection_for_note(self, note_path: Path) -> KnowledgeSelection:
-        document = self._current_editor().get_document()
-        satellites = tuple(
-            SatelliteItem(
-                title=str(getattr(heading, "title", "")),
-                kind="heading",
-                host_title=note_path.stem,
-                line_number=int(getattr(heading, "line_number", 1)),
-                preview=f"Markdown heading · line {getattr(heading, 'line_number', 1)}",
-            )
-            for heading in document.extract_headings()
-            if getattr(heading, "title", "")
-        )
+        editor = self._current_editor()
+        document = editor.get_document()
+        current_path = self.current_note_path
+        title = title_for_path(self.workspace_root, note_path) or note_path.stem
+        text = ""
+        if current_path is not None and current_path.resolve() == note_path.resolve():
+            title = editor.get_title() or document.title or document.get_title_from_content() or title
+            text = editor.get_text()
+        else:
+            try:
+                text = note_path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                text = ""
+        satellites = extract_markdown_satellites(text, title)
         return KnowledgeSelection(
             kind=KnowledgeObjectKind.STAR_NOTE,
-            title=document.title or document.get_title_from_content() or note_path.stem,
+            title=title,
             path=note_path,
-            description="Markdown 笔记星球，可通过标题、引用块和后续批注形成卫星。",
+            description="Markdown 笔记星球：标题、摘录、批注、引用、链接和标签会作为卫星展示。",
             tags=("笔记", "Markdown"),
             satellites=satellites,
         )

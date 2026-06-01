@@ -124,14 +124,23 @@ class KnowledgeModelService:
                 }
             )
 
+        ordered_titles = [
+            title
+            for title in DEFAULT_PLANETS
+            if planets.get(title, {}).get("stars") or title in {"Inbox", "Reading", "Research"}
+        ]
+        ordered_titles.extend(
+            title
+            for title, payload in planets.items()
+            if title not in ordered_titles and payload.get("stars")
+        )
         ordered_planets = tuple(
             {
                 "title": title,
                 "description": planets[title]["description"],
                 "stars": tuple(planets[title]["stars"]),
             }
-            for title in DEFAULT_PLANETS
-            if planets.get(title, {}).get("stars") or title in {"Inbox", "Reading", "Research"}
+            for title in ordered_titles
         )
 
         return self._success(

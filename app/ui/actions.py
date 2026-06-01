@@ -32,11 +32,20 @@ class AgniActionSet:
     open_workspace: QAction
     save_note: QAction
     delete_note: QAction
+    open_pdf: QAction
+    previous_pdf_page: QAction
+    next_pdf_page: QAction
+    zoom_in_pdf: QAction
+    zoom_out_pdf: QAction
+    fit_pdf_width: QAction
+    insert_pdf_excerpt: QAction
+    insert_pdf_citation: QAction
     command_palette: QAction
     focus_search: QAction
     toggle_notes: QAction
     toggle_search: QAction
     toggle_outline: QAction
+    toggle_main_toolbar: QAction
     refresh_workspace: QAction
     about: QAction
 
@@ -67,6 +76,51 @@ class AgniActionSet:
                 shortcut="Delete",
                 status_tip="删除当前笔记",
             ),
+            open_pdf=create_action(
+                parent,
+                "打开 PDF",
+                shortcut="Ctrl+Shift+O",
+                status_tip="从当前工作区选择并打开 PDF",
+            ),
+            previous_pdf_page=create_action(
+                parent,
+                "PDF 上一页",
+                shortcut="Alt+Left",
+                status_tip="跳转到 PDF 上一页",
+            ),
+            next_pdf_page=create_action(
+                parent,
+                "PDF 下一页",
+                shortcut="Alt+Right",
+                status_tip="跳转到 PDF 下一页",
+            ),
+            zoom_in_pdf=create_action(
+                parent,
+                "PDF 放大",
+                shortcut="Ctrl++",
+                status_tip="放大当前 PDF 页面",
+            ),
+            zoom_out_pdf=create_action(
+                parent,
+                "PDF 缩小",
+                shortcut="Ctrl+-",
+                status_tip="缩小当前 PDF 页面",
+            ),
+            fit_pdf_width=create_action(
+                parent,
+                "PDF 适宽",
+                status_tip="将当前 PDF 页面适配窗口宽度",
+            ),
+            insert_pdf_excerpt=create_action(
+                parent,
+                "摘录到笔记",
+                status_tip="将当前 PDF 选区作为 Markdown 摘录插入笔记",
+            ),
+            insert_pdf_citation=create_action(
+                parent,
+                "插入引用",
+                status_tip="向当前笔记插入 PDF 文献引用占位",
+            ),
             command_palette=create_action(
                 parent,
                 "命令面板",
@@ -81,22 +135,30 @@ class AgniActionSet:
             ),
             toggle_notes=create_action(
                 parent,
-                "左侧资源",
+                "资源库",
                 status_tip="显示或隐藏左侧资源面板",
                 checkable=True,
                 checked=True,
             ),
             toggle_search=create_action(
                 parent,
-                "搜索反链",
+                "搜索与反链",
                 status_tip="显示或隐藏搜索与反向链接面板",
                 checkable=True,
                 checked=True,
             ),
             toggle_outline=create_action(
                 parent,
-                "大纲 PDF",
+                "文档导航",
                 status_tip="显示或隐藏大纲与 PDF 面板",
+                checkable=True,
+                checked=True,
+            ),
+            toggle_main_toolbar=create_action(
+                parent,
+                "收起工具栏",
+                shortcut="Ctrl+Shift+T",
+                status_tip="折叠或展开顶部主工具栏",
                 checkable=True,
                 checked=True,
             ),
@@ -124,6 +186,49 @@ def build_app_stylesheet() -> str:
         color: #d8e6f3;
         font-family: "Microsoft YaHei UI", "Segoe UI", Arial;
         font-size: 13px;
+    }
+
+    QWidget#graph_cover_page {
+        background: #06101d;
+    }
+
+    QLabel#cover_title {
+        color: #dff7ff;
+        font-size: 30px;
+        font-weight: 700;
+    }
+
+    QLabel#cover_subtitle {
+        color: #8fb3c9;
+        font-size: 14px;
+    }
+
+    QPushButton#cover_primary_button,
+    QPushButton#cover_secondary_button {
+        min-height: 28px;
+        max-width: 150px;
+        padding: 4px 12px;
+        border-radius: 7px;
+    }
+
+    QPushButton#cover_primary_button {
+        background: #1d5f88;
+        border: 1px solid #39baf5;
+        color: #e9fbff;
+        font-weight: 600;
+    }
+
+    QPushButton#cover_secondary_button {
+        background: #0d2036;
+        border: 1px solid #284c70;
+        color: #b9d4e7;
+    }
+
+    QWidget#graph_cover_page QGraphicsView#knowledge_graph_view {
+        background: #07101c;
+        border: 1px solid #102b45;
+        border-radius: 8px;
+        padding: 0;
     }
 
     QMenuBar {
@@ -260,6 +365,8 @@ def build_app_stylesheet() -> str:
     }
 
     QLineEdit,
+    QComboBox,
+    QSpinBox#pdf_page_spin,
     QPlainTextEdit,
     QTextEdit {
         background: #07101c;
@@ -270,14 +377,50 @@ def build_app_stylesheet() -> str:
         selection-background-color: #1f6fa4;
     }
 
+    QSpinBox#pdf_page_spin {
+        min-height: 30px;
+        padding: 4px 6px;
+        font-weight: 600;
+    }
+
+    QComboBox {
+        min-height: 28px;
+        padding: 4px 8px;
+    }
+
+    QComboBox::drop-down {
+        width: 28px;
+        border: 0;
+    }
+
+    QComboBox QAbstractItemView {
+        background: #07101c;
+        border: 1px solid #2b638c;
+        color: #d8e6f3;
+        selection-background-color: #17476b;
+        selection-color: #ffffff;
+        outline: 0;
+    }
+
+    QInputDialog QComboBox QAbstractItemView {
+        background: #07101c;
+        border: 1px solid #2b638c;
+        color: #d8e6f3;
+        selection-background-color: #17476b;
+        selection-color: #ffffff;
+    }
+
     QLineEdit:focus,
+    QComboBox:focus,
+    QSpinBox#pdf_page_spin:focus,
     QPlainTextEdit:focus,
     QTextEdit:focus {
         border-color: #43b8ff;
     }
 
     QListWidget,
-    QTreeWidget {
+    QTreeWidget,
+    QGraphicsView#knowledge_graph_view {
         background: #07101c;
         border: 1px solid #1d3a59;
         border-radius: 7px;
@@ -333,12 +476,29 @@ def build_app_stylesheet() -> str:
     }
 
     QLabel#knowledge_dashboard,
-    QLabel#inspector_label {
+    QLabel#inspector_label,
+    QLabel#pdf_preview_surface {
         background: #07101c;
         border: 1px solid #1d3a59;
         border-radius: 8px;
         color: #d8e6f3;
         line-height: 1.5;
+    }
+
+    QLabel#muted_label {
+        color: #8da9bd;
+    }
+
+    QListWidget#pdf_thumbnail_list,
+    QTextEdit#pdf_selection_box {
+        background: #07101c;
+        border: 1px solid #1d3a59;
+        border-radius: 8px;
+    }
+
+    QWidget#pdf_viewer_widget,
+    QWidget#pdf_inspector_panel {
+        background: #0b1728;
     }
 
     QDialog QLabel#section_label {

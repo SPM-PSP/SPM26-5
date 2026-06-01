@@ -27,7 +27,7 @@ class WorkspacePickerDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("选择工作区")
         self.setStyleSheet(build_app_stylesheet())
-        self.resize(560, 180)
+        self.resize(560, 150)
 
         self._build_ui()
         if initial_path is not None:
@@ -41,10 +41,6 @@ class WorkspacePickerDialog(QDialog):
         title = QLabel("选择 Agni 工作区", self)
         title.setObjectName("section_label")
         layout.addWidget(title)
-
-        hint = QLabel("该弹窗目前只负责返回路径，实际工作区切换可在后续接入 controller。", self)
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
 
         path_row = QHBoxLayout()
         self.path_edit = QLineEdit(self)

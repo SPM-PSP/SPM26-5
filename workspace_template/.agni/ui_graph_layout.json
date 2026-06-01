@@ -1,0 +1,132 @@
+{
+  "orbit": {
+    "galaxy::D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template:workspace_template": {
+      "x": -453.39,
+      "y": 69.09
+    },
+    "planet:收集箱::收集箱": {
+      "x": -526.74,
+      "y": 78.81
+    },
+    "planet:新行星::新行星": {
+      "x": -281.73,
+      "y": 261.7
+    },
+    "planet:未归类::未归类": {
+      "x": -626.95,
+      "y": 190.83
+    },
+    "planet:研究主题::研究主题": {
+      "x": -579.04,
+      "y": 177.57
+    },
+    "planet:阅读资料::阅读资料": {
+      "x": -555.5,
+      "y": 132.12
+    },
+    "star_note:收集箱:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\notes\\1.md:1:heading:1:这是1号星球": {
+      "x": -419.25,
+      "y": 134.75
+    },
+    "star_note:收集箱:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\notes\\Inbox.md:Inbox:heading:1:Inbox": {
+      "x": -465.45,
+      "y": -3.92
+    },
+    "star_note:收集箱:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\notes\\Markdown测试.md:Markdown测试:heading:1:一级标题": {
+      "x": -380.62,
+      "y": 55.63
+    },
+    "star_note:新行星:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\notes\\三层卫星测试.md:三层卫星测试:heading:1:一级标题卫星": {
+      "x": -196.45,
+      "y": 92.51
+    },
+    "star_note:未归类:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\notes\\test2.md:test2:heading:1:test2": {
+      "x": -204.29,
+      "y": 56.64
+    },
+    "star_note:未归类:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\notes\\新行星2.md:新行星2:heading:1:新行星2": {
+      "x": -599.58,
+      "y": 222.63
+    },
+    "star_note:研究主题:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\notes\\r1-2.md:r1:heading:1:r1": {
+      "x": -538.16,
+      "y": -73.63
+    },
+    "star_note:研究主题:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\notes\\r2-2.md:r2:heading:1:r2": {
+      "x": -305.9,
+      "y": -7.09
+    },
+    "star_note:研究主题:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\notes\\r3-2.md:r3:heading:1:r3": {
+      "x": -343.96,
+      "y": 193.92
+    },
+    "star_note:阅读资料:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\notes\\R1.md:R1:heading:1:R1": {
+      "x": -556.2,
+      "y": 7.2
+    },
+    "star_note:阅读资料:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\notes\\R2.md:R2:heading:1:R2": {
+      "x": -425.76,
+      "y": -47.69
+    },
+    "star_note:阅读资料:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\notes\\R3.md:R3:heading:1:R3": {
+      "x": -350.99,
+      "y": 6.52
+    },
+    "star_note:阅读资料:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\notes\\R4.md:R4:heading:1:R4": {
+      "x": -357.31,
+      "y": 140.99
+    },
+    "star_reference:阅读资料:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\attachments\\Avila et al. - 2011 - The Onset of Turbulence in Pipe Flow.pdf:Avila et al. - 2011 - The Onset of Turbulence in Pipe Flow:annotation:None:Annotation p.2": {
+      "x": -390.42,
+      "y": 171.24
+    },
+    "star_reference:阅读资料:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\attachments\\srs_template-ieee.pdf:srs_template-ieee": {
+      "x": -402.1,
+      "y": 203.75
+    },
+    "star_reference:阅读资料:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\attachments\\srs_template-ieee.pdf:srs_template-ieee:annotation:None:Annotation p.1": {
+      "x": -484.27,
+      "y": 181.9
+    }
+  },
+  "star-detail:star_note:收集箱:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\notes\\1.md:1:heading:1:这是1号星球": {
+    "satellite:收集箱:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\notes\\1.md:Markdown测试:link:5:Markdown测试": {
+      "x": 83.64,
+      "y": -213.82
+    }
+  },
+  "star-detail:star_note:阅读资料:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\notes\\R1.md:R1:heading:1:R1": {
+    "satellite:阅读资料:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\notes\\R1.md:R1:heading:1:R1": {
+      "x": -145.32,
+      "y": 117.19
+    },
+    "star_note:阅读资料:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\notes\\R1.md:R1:heading:1:R1": {
+      "x": -35.95,
+      "y": 31.38
+    }
+  },
+  "star-detail:star_reference:阅读资料:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\attachments\\Avila et al. - 2011 - The Onset of Turbulence in Pipe Flow.pdf:Avila et al. - 2011 - The Onset of Turbulence in Pipe Flow:annotation:None:Annotation p.2": {
+    "satellite:阅读资料:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\attachments\\Avila et al. - 2011 - The Onset of Turbulence in Pipe Flow.pdf:Annotation p.1:annotation:None:Annotation p.1": {
+      "x": -295.41,
+      "y": 309.16
+    },
+    "satellite:阅读资料:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\attachments\\Avila et al. - 2011 - The Onset of Turbulence in Pipe Flow.pdf:Annotation p.2:annotation:None:Annotation p.2": {
+      "x": -204.89,
+      "y": 401.57
+    },
+    "star_reference:阅读资料:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\attachments\\Avila et al. - 2011 - The Onset of Turbulence in Pipe Flow.pdf:Avila et al. - 2011 - The Onset of Turbulence in Pipe Flow:annotation:None:Annotation p.2": {
+      "x": -162.72,
+      "y": 273.88
+    }
+  },
+  "star-detail:star_reference:阅读资料:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\attachments\\srs_template-ieee.pdf:srs_template-ieee:annotation:None:Annotation p.1": {
+    "satellite:阅读资料:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\attachments\\srs_template-ieee.pdf:Annotation p.1:annotation:None:Annotation p.1": {
+      "x": 26.71,
+      "y": 173.12
+    },
+    "star_reference:阅读资料:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\attachments\\srs_template-ieee.pdf:srs_template-ieee:annotation:None:Annotation p.1": {
+      "x": -18.22,
+      "y": 42.51
+    }
+  }
+}

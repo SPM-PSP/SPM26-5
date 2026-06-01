@@ -21,6 +21,31 @@ class ReferenceListItem:
 
 
 @dataclass(slots=True)
+class PdfDocumentItem:
+    title: str
+    path: Path
+    page_count: int | None = None
+    reference_key: str = ""
+
+
+@dataclass(slots=True)
+class PdfPageItem:
+    page_number: int
+    label: str = ""
+    thumbnail_path: Path | None = None
+
+
+@dataclass(slots=True)
+class PdfAnnotationDraft:
+    pdf_path: Path
+    page_number: int
+    kind: str
+    text: str = ""
+    citation_key: str = ""
+    rects: tuple[dict[str, float], ...] = ()
+
+
+@dataclass(slots=True)
 class SearchResultItem:
     title: str
     path: Path
@@ -72,6 +97,7 @@ class SatelliteItem:
     host_title: str
     line_number: int | None = None
     preview: str = ""
+    object_id: str = ""
 
 
 @dataclass(slots=True)
@@ -80,5 +106,17 @@ class KnowledgeSelection:
     title: str
     path: Path | None = None
     description: str = ""
+    tags: tuple[str, ...] = ()
+    satellites: tuple[SatelliteItem, ...] = ()
+
+
+@dataclass(slots=True)
+class KnowledgeGraphNode:
+    kind: KnowledgeObjectKind
+    title: str
+    color: str
+    path: Path | None = None
+    description: str = ""
+    planet: str = ""
     tags: tuple[str, ...] = ()
     satellites: tuple[SatelliteItem, ...] = ()

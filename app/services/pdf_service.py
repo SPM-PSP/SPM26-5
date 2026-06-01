@@ -125,6 +125,36 @@ class PdfService:
             annotations=annotations,
         )
 
+    def delete_annotation(self, workspace_root: str | Path, annotation_id: str) -> dict[str, object]:
+        annotation_id = str(annotation_id or "").strip()
+        if not annotation_id:
+            return self._failure("Annotation id is required.")
+
+        workspace_result = self.workspace_service.ensure_workspace_structure(workspace_root)
+        if not workspace_result["success"]:
+            return workspace_result
+
+        workspace_context = workspace_result["data"]["workspace_context"]
+        manifest = self._load_annotations_manifest(workspace_context.agni_dir)
+        annotations = manifest["annotations"]
+        target = next(
+            (item for item in annotations if item.get("annotation_id") == annotation_id),
+            None,
+        )
+        if target is None:
+            return self._failure(f"Annotation not found: {annotation_id}")
+
+        manifest["annotations"] = [
+            item for item in annotations if item.get("annotation_id") != annotation_id
+        ]
+        self._save_annotations_manifest(workspace_context.agni_dir, manifest)
+        self._delete_annotation_record(workspace_context, annotation_id)
+
+        return self._success(
+            "PDF annotation deleted successfully.",
+            annotation=target,
+        )
+
     def _resolve_workspace_pdf_path(self, workspace_root: Path, pdf_path: str | Path) -> Path | None:
         candidate = Path(pdf_path)
         if not candidate.is_absolute():
@@ -228,5 +258,17 @@ class PdfService:
                     annotation.get("color"),
                     annotation.get("created_at"),
                 ),
+            )
+            connection.commit()
+
+    def _delete_annotation_record(self, workspace_context, annotation_id: str) -> None:
+        with self.workspace_service.connect_workspace_database(workspace_context) as connection:
+            connection.execute(
+                "DELETE FROM citations_catalog WHERE annotation_id = ?",
+                (annotation_id,),
+            )
+            connection.execute(
+                "DELETE FROM pdf_annotations WHERE annotation_id = ?",
+                (annotation_id,),
             )
             connection.commit()

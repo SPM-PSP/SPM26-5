@@ -1,0 +1,157 @@
+{
+  "annotations": [
+    {
+      "annotation_id": "annotation-25d5b4bafa64",
+      "reference_id": "srs_template-ieee",
+      "pdf_path": "D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\attachments\\srs_template-ieee.pdf",
+      "text": "Software Requirements Specification 这是摘录",
+      "page_number": 1,
+      "page_label": "1",
+      "rects": [
+        {
+          "x": 184.22000122070312,
+          "y": 125.94380187988281,
+          "width": 134.43984985351562,
+          "height": 35.72459411621094
+        },
+        {
+          "x": 327.5669860839844,
+          "y": 125.94380187988281,
+          "width": 212.52127075195312,
+          "height": 35.72459411621094
+        },
+        {
+          "x": 341.5899963378906,
+          "y": 162.90382385253906,
+          "width": 198.58389282226562,
+          "height": 35.72459411621094
+        }
+      ],
+      "comment": null,
+      "color": "yellow",
+      "created_at": "2026-05-30T23:24:05.850723"
+    },
+    {
+      "annotation_id": "annotation-e22ee7964391",
+      "reference_id": "Avila_et_al._-_2011_-_The_Onset_of_Turbulence_in_Pipe_Flow",
+      "pdf_path": "D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\attachments\\Avila et al. - 2011 - The Onset of Turbulence in Pipe Flow.pdf",
+      "text": "This copy is for your personal, non-commercial use only.",
+      "page_number": 1,
+      "page_label": "1",
+      "rects": [
+        {
+          "x": 180.96035766601562,
+          "y": 118.30000305175781,
+          "width": 18.889999389648438,
+          "height": 13.539993286132812
+        },
+        {
+          "x": 202.63035583496094,
+          "y": 118.30000305175781,
+          "width": 21.1199951171875,
+          "height": 13.539993286132812
+        },
+        {
+          "x": 226.5303497314453,
+          "y": 118.30000305175781,
+          "width": 7.220001220703125,
+          "height": 13.539993286132812
+        },
+        {
+          "x": 236.5303497314453,
+          "y": 118.30000305175781,
+          "width": 11.669998168945312,
+          "height": 13.539993286132812
+        },
+        {
+          "x": 250.9803466796875,
+          "y": 118.30000305175781,
+          "width": 19.449981689453125,
+          "height": 13.539993286132812
+        },
+        {
+          "x": 273.2103271484375,
+          "y": 118.30000305175781,
+          "width": 41.129974365234375,
+          "height": 13.539993286132812
+        },
+        {
+          "x": 317.12030029296875,
+          "y": 118.30000305175781,
+          "width": 71.11993408203125,
+          "height": 13.539993286132812
+        },
+        {
+          "x": 391.0202331542969,
+          "y": 118.30000305175781,
+          "width": 16.1199951171875,
+          "height": 13.539993286132812
+        },
+        {
+          "x": 409.92022705078125,
+          "y": 118.30000305175781,
+          "width": 21.1199951171875,
+          "height": 13.539993286132812
+        }
+      ],
+      "comment": null,
+      "color": "yellow",
+      "created_at": "2026-06-01T23:34:29.516413"
+    },
+    {
+      "annotation_id": "annotation-a92ae8ff6d71",
+      "reference_id": "Avila_et_al._-_2011_-_The_Onset_of_Turbulence_in_Pipe_Flow",
+      "pdf_path": "D:\\SPM26_5\\Agni\\SPM26-5\\workspace_template\\attachments\\Avila et al. - 2011 - The Onset of Turbulence in Pipe Flow.pdf",
+      "text": "The Onset of Turbulence in Pipe Flow",
+      "page_number": 2,
+      "page_label": "2",
+      "rects": [
+        {
+          "x": 36.0,
+          "y": 184.6895751953125,
+          "width": 32.87670135498047,
+          "height": 21.917800903320312
+        },
+        {
+          "x": 76.02629089355469,
+          "y": 184.6895751953125,
+          "width": 50.65203857421875,
+          "height": 21.917800903320312
+        },
+        {
+          "x": 133.79722595214844,
+          "y": 184.6895751953125,
+          "width": 16.876708984375,
+          "height": 21.917800903320312
+        },
+        {
+          "x": 157.83448791503906,
+          "y": 184.6895751953125,
+          "width": 100.64649963378906,
+          "height": 21.917800903320312
+        },
+        {
+          "x": 265.608642578125,
+          "y": 184.6895751953125,
+          "width": 16.876708984375,
+          "height": 21.917800903320312
+        },
+        {
+          "x": 289.5888977050781,
+          "y": 184.6895751953125,
+          "width": 39.934234619140625,
+          "height": 21.917800903320312
+        },
+        {
+          "x": 336.7012023925781,
+          "y": 184.6895751953125,
+          "width": 43.331512451171875,
+          "height": 21.917800903320312
+        }
+      ],
+      "comment": null,
+      "color": "yellow",
+      "created_at": "2026-06-02T00:03:46.771150"
+    }
+  ]
+}

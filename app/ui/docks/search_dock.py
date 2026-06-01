@@ -28,7 +28,7 @@ class SearchDock(QDockWidget):
     result_selected = Signal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__("搜索与反向链接", parent)
+        super().__init__("搜索与反链", parent)
         self.workspace_root: Path | None = None
         self.notes_dir: Path | None = None
 
