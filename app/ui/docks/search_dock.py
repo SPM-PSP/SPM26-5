@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 
 SEARCH_CONTEXT_ROLE = int(Qt.ItemDataRole.UserRole) + 1
+SEARCH_KIND_ROLE = int(Qt.ItemDataRole.UserRole) + 2
 
 
 class SearchDock(QDockWidget):
@@ -66,7 +67,7 @@ class SearchDock(QDockWidget):
 
         search_row = QHBoxLayout()
         self.search_input = QLineEdit(page)
-        self.search_input.setPlaceholderText("Search note titles and content...")
+        self.search_input.setPlaceholderText("Search notes and references by title or tags...")
         self.search_button = QPushButton("Search", page)
         search_row.addWidget(self.search_input, 1)
         search_row.addWidget(self.search_button)
@@ -151,14 +152,28 @@ class SearchDock(QDockWidget):
 
         entries = tuple(result["data"].get("results", ()))
         if not entries:
-            self._add_disabled_item(self.search_results, "No matching notes found.")
+            self._add_disabled_item(self.search_results, "No matching notes or references found.")
             return
 
         for entry in entries:
-            note_path = Path(str(entry.get("file_path") or ""))
-            item = QListWidgetItem(str(entry.get("title") or note_path.stem))
-            item.setToolTip(str(note_path))
-            item.setData(Qt.ItemDataRole.UserRole, str(note_path))
+            object_kind = str(entry.get("object_kind") or "note")
+            if object_kind == "reference":
+                payload = {
+                    "reference_id": str(entry.get("reference_id") or ""),
+                    "title": str(entry.get("title") or "Reference"),
+                    "display_path": entry.get("display_path"),
+                    "pdf_path": entry.get("pdf_path"),
+                    "source_path": entry.get("source_path"),
+                }
+                item = QListWidgetItem(f"[Ref] {payload['title']}")
+                item.setToolTip(str(payload.get("display_path") or payload.get("source_path") or ""))
+                item.setData(Qt.ItemDataRole.UserRole, payload)
+            else:
+                note_path = Path(str(entry.get("file_path") or ""))
+                item = QListWidgetItem(str(entry.get("title") or note_path.stem))
+                item.setToolTip(str(note_path))
+                item.setData(Qt.ItemDataRole.UserRole, str(note_path))
+            item.setData(SEARCH_KIND_ROLE, object_kind)
             item.setData(SEARCH_CONTEXT_ROLE, str(entry.get("context") or ""))
             self.search_results.addItem(item)
 
@@ -204,9 +219,13 @@ class SearchDock(QDockWidget):
         self.search_preview.setPlainText(str(item.data(SEARCH_CONTEXT_ROLE) or ""))
 
     def _emit_result_selected(self, item: QListWidgetItem) -> None:
-        note_path = item.data(Qt.ItemDataRole.UserRole)
-        if note_path:
-            self.result_selected.emit(Path(str(note_path)))
+        payload = item.data(Qt.ItemDataRole.UserRole)
+        if not payload:
+            return
+        if item.data(SEARCH_KIND_ROLE) == "reference":
+            self.result_selected.emit(payload)
+            return
+        self.result_selected.emit(Path(str(payload)))
 
     def _show_result_context_menu(self, position) -> None:
         self._show_note_context_menu(self.search_results, position)
@@ -219,15 +238,25 @@ class SearchDock(QDockWidget):
         if item is None or not item.data(Qt.ItemDataRole.UserRole):
             return
 
-        note_path = Path(str(item.data(Qt.ItemDataRole.UserRole)))
         menu = QMenu(self)
         open_action = QAction("Open", menu)
         copy_path_action = QAction("Copy Path", menu)
         menu.addAction(open_action)
-        menu.addAction(copy_path_action)
-
-        open_action.triggered.connect(lambda: self.result_selected.emit(note_path))
-        copy_path_action.triggered.connect(lambda: QApplication.clipboard().setText(str(note_path)))
+        payload = item.data(Qt.ItemDataRole.UserRole)
+        if item.data(SEARCH_KIND_ROLE) == "reference":
+            reference_payload = dict(payload)
+            display_path = reference_payload.get("display_path") or reference_payload.get("source_path")
+            if display_path:
+                menu.addAction(copy_path_action)
+                copy_path_action.triggered.connect(
+                    lambda: QApplication.clipboard().setText(str(display_path))
+                )
+            open_action.triggered.connect(lambda: self.result_selected.emit(reference_payload))
+        else:
+            note_path = Path(str(payload))
+            menu.addAction(copy_path_action)
+            open_action.triggered.connect(lambda: self.result_selected.emit(note_path))
+            copy_path_action.triggered.connect(lambda: QApplication.clipboard().setText(str(note_path)))
         menu.exec(list_widget.mapToGlobal(position))
 
     def _add_disabled_item(self, list_widget: QListWidget, text: str) -> None:

@@ -16,7 +16,9 @@ class AppContext:
     reference_service: Any | None = None
     link_service: Any | None = None
     knowledge_model_service: Any | None = None
+    pdf_service: Any | None = None
     note_controller: Any | None = None
     search_controller: Any | None = None
     reference_controller: Any | None = None
     knowledge_controller: Any | None = None
+    pdf_controller: Any | None = None

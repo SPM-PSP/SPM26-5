@@ -3,10 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, Qt
-from PySide6.QtGui import QKeySequence
+from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
+    QFileDialog,
     QInputDialog,
     QLabel,
     QMainWindow,
@@ -19,12 +20,14 @@ from PySide6.QtWidgets import (
 from app.bootstrap.startup import bootstrap_workspace
 from app.ui.actions import AgniActionSet, build_app_stylesheet
 from app.ui.dialogs.command_palette_dialog import CommandPaletteDialog
+from app.ui.dialogs.reference_edit_dialog import ReferenceEditDialog
 from app.ui.dialogs.workspace_picker_dialog import WorkspacePickerDialog
 from app.ui.docks.note_list_dock import NoteListDock
 from app.ui.docks.outline_dock import OutlineDock
 from app.ui.docks.search_dock import SearchDock
 from app.ui.models.ui_items import CommandItem, KnowledgeObjectKind, KnowledgeSelection, SatelliteItem
 from app.ui.widgets.note_editor_widget import NoteEditorWidget
+from app.ui.widgets.pdf_viewer_widget import PdfViewerWidget
 
 
 class MainWindow(QMainWindow):
@@ -75,6 +78,10 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.actions.open_workspace)
         file_menu.addAction(self.actions.save_note)
         file_menu.addAction(self.actions.delete_note)
+        self.import_reference_file_action = QAction("Import Reference File", self)
+        self.import_reference_folder_action = QAction("Import Reference Folder", self)
+        file_menu.addAction(self.import_reference_file_action)
+        file_menu.addAction(self.import_reference_folder_action)
         file_menu.addSeparator()
         file_menu.addAction(self.actions.refresh_workspace)
 
@@ -123,6 +130,8 @@ class MainWindow(QMainWindow):
         self.actions.open_workspace.triggered.connect(self.show_workspace_picker)
         self.actions.save_note.triggered.connect(self.save_current_note)
         self.actions.delete_note.triggered.connect(self.delete_current_note)
+        self.import_reference_file_action.triggered.connect(self.import_reference_file)
+        self.import_reference_folder_action.triggered.connect(self.import_reference_folder)
         self.actions.command_palette.triggered.connect(self.show_command_palette)
         self.actions.focus_search.triggered.connect(self.search_dock.focus_search)
         self.actions.refresh_workspace.triggered.connect(self.refresh_workspace)
@@ -138,12 +147,13 @@ class MainWindow(QMainWindow):
         self.note_dock.note_selected.connect(self.open_note)
         self.note_dock.delete_note_requested.connect(self.delete_note)
         self.note_dock.reference_selected.connect(self.open_pdf_placeholder)
+        self.note_dock.reference_edit_requested.connect(self.edit_reference)
         self.note_dock.knowledge_selected.connect(self.open_knowledge_object)
         self.note_dock.assign_to_planet_requested.connect(self.assign_object_to_planet)
         self.note_dock.new_note_requested.connect(self.create_new_note)
         self.note_dock.refresh_requested.connect(self.refresh_workspace)
 
-        self.search_dock.result_selected.connect(self.open_note)
+        self.search_dock.result_selected.connect(self.open_search_result)
         self.outline_dock.heading_selected.connect(self.goto_line)
         self.outline_dock.pdf_selected.connect(self.open_pdf_placeholder)
 
@@ -510,6 +520,8 @@ class MainWindow(QMainWindow):
             CommandItem("Open Workspace", self.show_workspace_picker, "Switch to another workspace"),
             CommandItem("Save Note", self.save_current_note, "Save the current note"),
             CommandItem("Delete Note", self.delete_current_note, "Delete the current note"),
+            CommandItem("Import Reference File", self.import_reference_file, "Import a PDF, BibTeX, or RIS file"),
+            CommandItem("Import Reference Folder", self.import_reference_folder, "Import supported files from a folder"),
             CommandItem("Focus Knowledge Model", self.focus_knowledge_model, "Open the knowledge model view"),
             CommandItem("Focus Search", self.search_dock.focus_search, "Jump to global search"),
             CommandItem("Refresh Workspace", self.refresh_workspace, "Reload notes and references"),
@@ -586,32 +598,134 @@ class MainWindow(QMainWindow):
         self.status_label.setText(f"Assigned {display_name} -> {planet}")
 
     def open_pdf_placeholder(self, pdf_ref: object) -> None:
-        if isinstance(pdf_ref, dict):
-            title = str(pdf_ref.get("title") or pdf_ref.get("reference_id") or "Reference")
-            path_value = pdf_ref.get("display_path")
-            path = Path(str(path_value)) if path_value else None
-        else:
-            path = Path(pdf_ref)
-            title = path.name
+        controller = getattr(self.app_context, "pdf_controller", None)
+        if controller is None:
+            self.status_label.setText("PDF controller is not available")
+            return
 
-        tab_key = str(path) if path is not None else f"reference:{title}"
+        if isinstance(pdf_ref, dict) and pdf_ref.get("reference_id"):
+            result = controller.open_reference_pdf(self.workspace_root, str(pdf_ref["reference_id"]))
+            title = str(pdf_ref.get("title") or pdf_ref.get("reference_id") or "Reference")
+        else:
+            path = Path(str(pdf_ref)) if not isinstance(pdf_ref, dict) else Path(str(pdf_ref.get("display_path") or ""))
+            title = path.name
+            result = controller.open_pdf(self.workspace_root, path)
+
+        if not result["success"]:
+            self._show_message(QMessageBox.Icon.Warning, "Open PDF Failed", str(result["message"]))
+            return
+
+        pdf_payload = dict(result["data"]["pdf"])
+        title = str(pdf_payload.get("title") or title)
+        tab_key = str(pdf_payload.get("file_path") or f"reference:{title}")
         for index in range(self.workspace_tabs.count()):
             if self.workspace_tabs.tabToolTip(index) == tab_key:
                 self.workspace_tabs.setCurrentIndex(index)
                 return
 
-        body = QLabel(self)
-        body.setObjectName("knowledge_dashboard")
-        body.setWordWrap(True)
-        body.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        body.setMargin(24)
-        if path is not None:
-            body.setText(f"Reference Preview\n\n{title}\n\n{path}")
-        else:
-            body.setText(f"Reference Preview\n\n{title}\n\nNo local file is bound yet.")
+        body = PdfViewerWidget(pdf_payload, self)
         index = self.workspace_tabs.addTab(body, title)
         self.workspace_tabs.setTabToolTip(index, tab_key)
         self.workspace_tabs.setCurrentIndex(index)
+        self.status_label.setText(f"Opened PDF {title}")
+
+    def open_search_result(self, result: object) -> None:
+        if isinstance(result, dict):
+            self.open_pdf_placeholder(result)
+            return
+        self.open_note(result)
+
+    def edit_reference(self, payload: object) -> None:
+        if not isinstance(payload, dict):
+            return
+
+        controller = getattr(self.app_context, "reference_controller", None)
+        if controller is None:
+            self.status_label.setText("Reference controller is not available")
+            return
+
+        reference_id = str(payload.get("reference_id") or "")
+        if not reference_id:
+            return
+
+        result = controller.get_reference(self.workspace_root, reference_id)
+        if not result["success"]:
+            self._show_message(QMessageBox.Icon.Warning, "Load Reference Failed", str(result["message"]))
+            return
+
+        dialog = ReferenceEditDialog(dict(result["data"]["reference"]), self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        update_result = controller.update_reference(self.workspace_root, reference_id, dialog.payload())
+        if not update_result["success"]:
+            self._show_message(QMessageBox.Icon.Warning, "Update Reference Failed", str(update_result["message"]))
+            return
+
+        self.note_dock.refresh()
+        self.outline_dock.refresh_pdfs()
+        self.search_dock.perform_search()
+        updated = dict(update_result["data"]["reference"])
+        self.status_label.setText(f"Updated reference {updated.get('title') or reference_id}")
+
+    def import_reference_file(self) -> None:
+        controller = getattr(self.app_context, "reference_controller", None)
+        if controller is None:
+            self.status_label.setText("Reference controller is not available")
+            return
+
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import Reference File",
+            str(self.workspace_root),
+            "Supported Files (*.pdf *.bib *.ris);;All Files (*)",
+        )
+        if not selected:
+            return
+
+        tags = self._prompt_tags("Reference Tags", "Optional tags for this import:")
+        if tags is None:
+            return
+
+        result = controller.import_reference_file(self.workspace_root, selected, tags=tags)
+        if not result["success"]:
+            self._show_message(QMessageBox.Icon.Warning, "Import Failed", str(result["message"]))
+            return
+
+        self.note_dock.refresh()
+        self.outline_dock.refresh_pdfs()
+        self.search_dock.perform_search()
+        imported = tuple(result["data"].get("references", ()))
+        self.status_label.setText(f"Imported {len(imported)} reference(s)")
+
+    def import_reference_folder(self) -> None:
+        controller = getattr(self.app_context, "reference_controller", None)
+        if controller is None:
+            self.status_label.setText("Reference controller is not available")
+            return
+
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Import Reference Folder",
+            str(self.workspace_root),
+        )
+        if not selected:
+            return
+
+        tags = self._prompt_tags("Folder Tags", "Optional tags for all imported references:")
+        if tags is None:
+            return
+
+        result = controller.import_reference_directory(self.workspace_root, selected, tags=tags)
+        if not result["success"]:
+            self._show_message(QMessageBox.Icon.Warning, "Import Failed", str(result["message"]))
+            return
+
+        self.note_dock.refresh()
+        self.outline_dock.refresh_pdfs()
+        self.search_dock.perform_search()
+        imported = tuple(result["data"].get("references", ()))
+        self.status_label.setText(f"Imported {len(imported)} reference(s)")
 
     def show_about_dialog(self) -> None:
         self._show_message(
@@ -730,6 +844,24 @@ class MainWindow(QMainWindow):
         cleaned = "".join(char for char in title.strip() if char not in r'\/:*?"<>|')
         cleaned = "-".join(cleaned.split())
         return cleaned or "Untitled"
+
+    def _prompt_tags(
+        self,
+        title: str,
+        label: str,
+    ) -> tuple[str, ...] | None:
+        value, accepted = QInputDialog.getText(self, title, label)
+        if not accepted:
+            return None
+        tags = []
+        for part in value.split(","):
+            normalized = part.strip().lstrip("#").casefold().replace(" ", "-")
+            normalized = "".join(
+                char for char in normalized if char.isalnum() or char in {"-", "_", "/"}
+            )
+            if normalized and normalized not in tags:
+                tags.append(normalized)
+        return tuple(tags)
 
     def _is_deletable_note_path(self, note_path: Path) -> bool:
         try:

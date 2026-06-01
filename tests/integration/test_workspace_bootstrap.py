@@ -59,3 +59,4 @@ def test_bootstrap_workspace_initializes_database_and_controllers(tmp_path):
     assert ctx.search_controller is not None
     assert ctx.reference_controller is not None
     assert ctx.knowledge_controller is not None
+    assert ctx.pdf_controller is not None

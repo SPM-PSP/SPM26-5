@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -31,6 +32,7 @@ class ReferenceService:
             "reference_id": reference_id,
             "title": normalized["title"],
             "authors": normalized["authors"],
+            "tags": normalized["tags"],
             "year": normalized["year"],
             "entry_type": normalized["entry_type"],
             "source_format": normalized["source_format"],
@@ -72,6 +74,43 @@ class ReferenceService:
             return self._failure(f"Reference not found: {reference_id}")
         return self._success("Reference loaded successfully.", reference=record)
 
+    def update_reference(
+        self,
+        workspace_root: str | Path,
+        reference_id: str,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        workspace_result = self.workspace_service.ensure_workspace_structure(workspace_root)
+        if not workspace_result["success"]:
+            return workspace_result
+
+        workspace_context = workspace_result["data"]["workspace_context"]
+        manifest = self._load_manifest(workspace_context.agni_dir)
+        record = self._find_reference(manifest, reference_id)
+        if record is None:
+            return self._failure(f"Reference not found: {reference_id}")
+
+        normalized = self._normalize_reference_payload({**record, **payload, "reference_id": reference_id})
+        if not normalized["title"]:
+            return self._failure("Reference title is required.")
+
+        record.update(
+            {
+                "title": normalized["title"],
+                "authors": normalized["authors"],
+                "tags": normalized["tags"],
+                "year": normalized["year"],
+                "entry_type": normalized["entry_type"],
+                "source_format": str(record.get("source_format") or normalized["source_format"] or "manual"),
+                "source_path": record.get("source_path"),
+                "pdf_path": record.get("pdf_path"),
+                "updated_at": datetime.now().isoformat(),
+            }
+        )
+        self._save_manifest(workspace_context.agni_dir, manifest)
+        self._sync_reference_record(workspace_context, record)
+        return self._success("Reference updated successfully.", reference=record)
+
     def bind_pdf(
         self,
         workspace_root: str | Path,
@@ -101,53 +140,41 @@ class ReferenceService:
         self._sync_reference_record(workspace_context, record)
         return self._success("PDF bound successfully.", reference=record)
 
-    def import_reference_file(self, workspace_root: str | Path, import_path: str | Path) -> dict[str, object]:
+    def import_reference_file(
+        self,
+        workspace_root: str | Path,
+        import_path: str | Path,
+        *,
+        tags: tuple[str, ...] = (),
+    ) -> dict[str, object]:
+        return self._import_reference_path(workspace_root, import_path, tags=tags)
+
+    def import_reference_directory(
+        self,
+        workspace_root: str | Path,
+        import_dir: str | Path,
+        *,
+        tags: tuple[str, ...] = (),
+    ) -> dict[str, object]:
         workspace_result = self.workspace_service.ensure_workspace_structure(workspace_root)
         if not workspace_result["success"]:
             return workspace_result
 
         workspace_context = workspace_result["data"]["workspace_context"]
-        source_path = Path(import_path).expanduser().resolve()
-        if not source_path.exists() or not source_path.is_file():
-            return self._failure("Reference import file does not exist.")
-        if source_path.suffix.lower() not in {".bib", ".ris"}:
-            return self._failure("Only .bib and .ris import files are supported.")
+        directory_path = Path(import_dir).expanduser().resolve()
+        if not directory_path.exists() or not directory_path.is_dir():
+            return self._failure("Reference import directory does not exist.")
 
-        try:
-            imported_entries = import_reference_entries(source_path)
-        except (OSError, UnicodeDecodeError, ValueError) as error:
-            return self._failure(f"Failed to import references: {error}")
-
-        copied_source = self._copy_import_source(workspace_context.references_path, source_path)
-        manifest = self._load_manifest(workspace_context.agni_dir)
         created: list[dict[str, object]] = []
+        for candidate in sorted(directory_path.rglob("*")):
+            if not candidate.is_file() or candidate.suffix.lower() not in {".bib", ".ris", ".pdf"}:
+                continue
+            result = self._import_reference_path(workspace_root, candidate, tags=tags)
+            if result["success"]:
+                created.extend(tuple(result["data"].get("references", ())))
 
-        for entry in imported_entries:
-            title = str(entry.get("title") or "").strip()
-            reference_id = self._ensure_unique_reference_id(
-                manifest,
-                str(entry.get("reference_id") or self._generate_reference_id(title or "reference")),
-            )
-            record = {
-                "reference_id": reference_id,
-                "title": title or reference_id,
-                "authors": tuple(entry.get("authors", ())),
-                "year": entry.get("year"),
-                "entry_type": entry.get("entry_type"),
-                "source_format": entry.get("source_format"),
-                "source_path": str(copied_source),
-                "pdf_path": None,
-                "created_at": datetime.now().isoformat(),
-                "updated_at": datetime.now().isoformat(),
-            }
-            manifest["references"].append(record)
-            created.append(record)
-            self._sync_reference_record(workspace_context, record)
-
-        self._save_manifest(workspace_context.agni_dir, manifest)
         return self._success(
-            "Reference import completed successfully.",
-            import_source=str(copied_source),
+            "Reference directory import completed successfully.",
             references=tuple(created),
         )
 
@@ -191,6 +218,15 @@ class ReferenceService:
             normalized_authors = tuple(part.strip() for part in authors.split(";") if part.strip())
         else:
             normalized_authors = tuple(str(part).strip() for part in authors if str(part).strip())
+        tags = payload.get("tags", ())
+        if isinstance(tags, str):
+            normalized_tags = tuple(
+                self._normalize_tag(part) for part in tags.split(",") if self._normalize_tag(part)
+            )
+        else:
+            normalized_tags = tuple(
+                self._normalize_tag(str(part)) for part in tags if self._normalize_tag(str(part))
+            )
 
         year_value = payload.get("year")
         try:
@@ -202,6 +238,7 @@ class ReferenceService:
             "reference_id": str(payload.get("reference_id") or "").strip() or None,
             "title": str(payload.get("title") or "").strip(),
             "authors": normalized_authors,
+            "tags": normalized_tags,
             "year": year,
             "entry_type": str(payload.get("entry_type") or "reference").strip(),
             "source_format": str(payload.get("source_format") or "manual").strip(),
@@ -269,13 +306,14 @@ class ReferenceService:
             connection.execute(
                 """
                 INSERT INTO references_catalog(
-                    reference_id, title, authors_json, year, entry_type,
+                    reference_id, title, authors_json, tags_json, year, entry_type,
                     source_format, source_path, pdf_path, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(reference_id) DO UPDATE SET
                     title = excluded.title,
                     authors_json = excluded.authors_json,
+                    tags_json = excluded.tags_json,
                     year = excluded.year,
                     entry_type = excluded.entry_type,
                     source_format = excluded.source_format,
@@ -288,6 +326,7 @@ class ReferenceService:
                     record.get("reference_id"),
                     record.get("title"),
                     json.dumps(list(record.get("authors", ()))),
+                    json.dumps(list(record.get("tags", ())), ensure_ascii=False),
                     record.get("year"),
                     record.get("entry_type"),
                     record.get("source_format"),
@@ -306,3 +345,93 @@ class ReferenceService:
                 (record.get("reference_id"),),
             )
             connection.commit()
+
+    def _import_reference_path(
+        self,
+        workspace_root: str | Path,
+        import_path: str | Path,
+        *,
+        tags: tuple[str, ...] = (),
+    ) -> dict[str, object]:
+        workspace_result = self.workspace_service.ensure_workspace_structure(workspace_root)
+        if not workspace_result["success"]:
+            return workspace_result
+
+        workspace_context = workspace_result["data"]["workspace_context"]
+        source_path = Path(import_path).expanduser().resolve()
+        if not source_path.exists() or not source_path.is_file():
+            return self._failure("Reference import file does not exist.")
+
+        suffix = source_path.suffix.lower()
+        if suffix == ".pdf":
+            return self._import_pdf_reference(workspace_context, source_path, tags=tags)
+        if suffix not in {".bib", ".ris"}:
+            return self._failure("Only .bib, .ris, and .pdf import files are supported.")
+
+        try:
+            imported_entries = import_reference_entries(source_path)
+        except (OSError, UnicodeDecodeError, ValueError) as error:
+            return self._failure(f"Failed to import references: {error}")
+
+        copied_source = self._copy_import_source(workspace_context.references_path, source_path)
+        manifest = self._load_manifest(workspace_context.agni_dir)
+        created: list[dict[str, object]] = []
+
+        for entry in imported_entries:
+            title = str(entry.get("title") or "").strip()
+            reference_id = self._ensure_unique_reference_id(
+                manifest,
+                str(entry.get("reference_id") or self._generate_reference_id(title or "reference")),
+            )
+            record = {
+                "reference_id": reference_id,
+                "title": title or reference_id,
+                "authors": tuple(entry.get("authors", ())),
+                "tags": tuple(tags),
+                "year": entry.get("year"),
+                "entry_type": entry.get("entry_type"),
+                "source_format": entry.get("source_format"),
+                "source_path": str(copied_source),
+                "pdf_path": None,
+                "created_at": datetime.now().isoformat(),
+                "updated_at": datetime.now().isoformat(),
+            }
+            manifest["references"].append(record)
+            created.append(record)
+            self._sync_reference_record(workspace_context, record)
+
+        self._save_manifest(workspace_context.agni_dir, manifest)
+        return self._success(
+            "Reference import completed successfully.",
+            import_source=str(copied_source),
+            references=tuple(created),
+        )
+
+    def _import_pdf_reference(self, workspace_context, source_path: Path, *, tags: tuple[str, ...]) -> dict[str, object]:
+        manifest = self._load_manifest(workspace_context.agni_dir)
+        reference_id = self._ensure_unique_reference_id(
+            manifest,
+            self._generate_reference_id(source_path.stem or "reference"),
+        )
+        stored_pdf_path = self._store_pdf(workspace_context.attachments_path, source_path)
+        record = {
+            "reference_id": reference_id,
+            "title": source_path.stem,
+            "authors": (),
+            "tags": tuple(tags),
+            "year": None,
+            "entry_type": "pdf",
+            "source_format": "pdf",
+            "source_path": str(source_path),
+            "pdf_path": str(stored_pdf_path),
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+        }
+        manifest["references"].append(record)
+        self._save_manifest(workspace_context.agni_dir, manifest)
+        self._sync_reference_record(workspace_context, record)
+        return self._success("PDF reference imported successfully.", references=(record,))
+
+    def _normalize_tag(self, tag: str) -> str:
+        normalized = tag.strip().lstrip("#").casefold().replace(" ", "-")
+        return re.sub(r"[^a-z0-9_\-/\u4e00-\u9fff]+", "", normalized)

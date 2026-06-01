@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -24,6 +25,7 @@ class SearchService:
             results = self._search_notes_by_fts(workspace_context, normalized_query)
         except sqlite3.OperationalError:
             results = self._search_notes_by_scan(workspace_context.notes_path, normalized_query)
+        results.extend(self._search_references(workspace_context, normalized_query))
 
         return self._success(
             "Search completed successfully.",
@@ -50,6 +52,7 @@ class SearchService:
             content = str(row["content"] or "")
             results.append(
                 {
+                    "object_kind": "note",
                     "title": str(row["title"] or note_path.stem),
                     "file_path": str(note_path),
                     "relative_path": str(row["relative_path"]),
@@ -75,6 +78,7 @@ class SearchService:
 
             results.append(
                 {
+                    "object_kind": "note",
                     "title": title,
                     "file_path": str(note_path),
                     "relative_path": str(note_path.relative_to(notes_dir)),
@@ -82,6 +86,46 @@ class SearchService:
                 }
             )
 
+        return results
+
+    def _search_references(self, workspace_context, query: str) -> list[dict[str, object]]:
+        like_query = f"%{query.casefold()}%"
+        with self.workspace_service.connect_workspace_database(workspace_context) as connection:
+            rows = connection.execute(
+                """
+                SELECT reference_id, title, tags_json, authors_json, pdf_path, source_path
+                FROM references_catalog
+                WHERE lower(title) LIKE ?
+                   OR lower(tags_json) LIKE ?
+                ORDER BY title COLLATE NOCASE ASC
+                """,
+                (like_query, like_query),
+            ).fetchall()
+
+        results: list[dict[str, object]] = []
+        for row in rows:
+            tags = self._load_tags(row["tags_json"])
+            authors = self._load_tags(row["authors_json"])
+            display_path = str(row["pdf_path"] or row["source_path"] or "")
+            context_parts = []
+            if tags:
+                context_parts.append(f"Tags: {', '.join(tags)}")
+            if authors:
+                context_parts.append(f"Authors: {', '.join(authors)}")
+            if display_path:
+                context_parts.append(display_path)
+            results.append(
+                {
+                    "object_kind": "reference",
+                    "reference_id": str(row["reference_id"]),
+                    "title": str(row["title"] or row["reference_id"]),
+                    "display_path": display_path or None,
+                    "pdf_path": str(row["pdf_path"]) if row["pdf_path"] else None,
+                    "source_path": str(row["source_path"]) if row["source_path"] else None,
+                    "context": "\n".join(context_parts) or "Reference",
+                    "tags": tags,
+                }
+            )
         return results
 
     def _derive_title(self, text: str, note_path: Path) -> str:
@@ -106,6 +150,17 @@ class SearchService:
         prefix = "..." if start > 0 else ""
         suffix = "..." if end < len(text) else ""
         return f"{prefix}{text[start:end].strip()}{suffix}"
+
+    def _load_tags(self, raw_value: object) -> tuple[str, ...]:
+        if raw_value in (None, ""):
+            return ()
+        try:
+            data = json.loads(str(raw_value))
+        except json.JSONDecodeError:
+            return ()
+        if not isinstance(data, list):
+            return ()
+        return tuple(str(item) for item in data if str(item).strip())
 
     def _success(self, message: str, **data: object) -> dict[str, object]:
         return {

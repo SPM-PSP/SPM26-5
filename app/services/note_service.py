@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -66,6 +67,7 @@ class NoteService:
                 resolved_note,
                 content,
                 title=self._derive_title(content, resolved_note),
+                tags=self._extract_note_tags(content),
             ),
         )
 
@@ -114,6 +116,7 @@ class NoteService:
                 target_path,
                 content,
                 title=title,
+                tags=self._extract_note_tags(content),
                 cursor_position=int(note_payload.get("cursor_position") or 0),
                 version=version,
             ),
@@ -169,6 +172,7 @@ class NoteService:
                     "title": self._derive_title(content, note_path),
                     "file_path": str(note_path),
                     "relative_path": str(note_path.relative_to(workspace_context.notes_path)),
+                    "tags": self._extract_note_tags(content),
                     "planet": planets_by_note_id.get(note_path.stem),
                 }
             )
@@ -253,12 +257,14 @@ class NoteService:
         content: str,
         *,
         title: str,
+        tags: tuple[str, ...] = (),
         cursor_position: int = 0,
         version: int = 1,
     ) -> dict[str, object]:
         return {
             "note_id": note_path.stem,
             "title": title,
+            "tags": tags,
             "file_path": str(note_path),
             "markdown_content": content,
             "cursor_position": max(0, cursor_position),
@@ -290,6 +296,8 @@ class NoteService:
         relative_path = str(note_path.relative_to(workspace_context.notes_path))
         content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
         links = self._extract_note_links(content)
+        tags = self._extract_note_tags(content)
+        tags_json = json.dumps(list(tags), ensure_ascii=False)
 
         with self.workspace_service.connect_workspace_database(workspace_context) as connection:
             existing_planet_row = connection.execute(
@@ -308,12 +316,16 @@ class NoteService:
 
             connection.execute(
                 """
-                INSERT INTO notes(note_id, relative_path, title, content, planet, content_hash, updated_at, file_mtime)
-                VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?)
+                INSERT INTO notes(
+                    note_id, relative_path, title, content, tags_json,
+                    planet, content_hash, updated_at, file_mtime
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
                 ON CONFLICT(note_id) DO UPDATE SET
                     relative_path = excluded.relative_path,
                     title = excluded.title,
                     content = excluded.content,
+                    tags_json = excluded.tags_json,
                     planet = excluded.planet,
                     content_hash = excluded.content_hash,
                     updated_at = excluded.updated_at,
@@ -324,6 +336,7 @@ class NoteService:
                     relative_path,
                     title,
                     content,
+                    tags_json,
                     planet,
                     content_hash,
                     note_path.stat().st_mtime,
@@ -345,10 +358,10 @@ class NoteService:
             )
             connection.execute(
                 """
-                INSERT INTO notes_fts(note_id, relative_path, title, content)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO notes_fts(note_id, relative_path, title, tags_json, content)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (note_path.stem, relative_path, title, content),
+                (note_path.stem, relative_path, title, tags_json, content),
             )
             connection.execute(
                 "DELETE FROM note_links WHERE source_note_id = ?",
@@ -398,6 +411,41 @@ class NoteService:
                 }
             )
         return links
+
+    def _extract_note_tags(self, content: str) -> tuple[str, ...]:
+        tags: list[str] = []
+        seen: set[str] = set()
+
+        def add_tag(raw: str) -> None:
+            normalized = raw.strip().lstrip("#").strip().casefold()
+            normalized = normalized.replace(" ", "-")
+            normalized = re.sub(r"[^a-z0-9_\-/\u4e00-\u9fff]+", "", normalized)
+            if not normalized or normalized in seen:
+                return
+            seen.add(normalized)
+            tags.append(normalized)
+
+        frontmatter_match = re.match(r"^---\s*\n(.*?)\n---\s*\n?", content, re.DOTALL)
+        if frontmatter_match:
+            for line in frontmatter_match.group(1).splitlines():
+                key, _, value = line.partition(":")
+                if key.strip().casefold() != "tags":
+                    continue
+                raw_value = value.strip().strip("[]")
+                for part in raw_value.split(","):
+                    add_tag(part)
+
+        for line in content.splitlines():
+            stripped = line.strip()
+            if re.match(r"^#{1,6}\s", stripped):
+                continue
+            if stripped.casefold().startswith("tags:"):
+                for part in stripped.split(":", 1)[1].split(","):
+                    add_tag(part)
+            for match in re.finditer(r"(?<!\w)#([A-Za-z0-9_\-/\u4e00-\u9fff]+)", line):
+                add_tag(match.group(1))
+
+        return tuple(tags)
 
     def _infer_planet_from_path(self, note_path: Path) -> str:
         lowered = str(note_path).casefold()

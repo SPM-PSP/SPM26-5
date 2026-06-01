@@ -18,6 +18,14 @@ class ReferenceController:
     def get_reference(self, workspace_root: str | Path, reference_id: str) -> dict[str, object]:
         return self.reference_service.get_reference(workspace_root, reference_id)
 
+    def update_reference(
+        self,
+        workspace_root: str | Path,
+        reference_id: str,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        return self.reference_service.update_reference(workspace_root, reference_id, payload)
+
     def bind_pdf(
         self,
         workspace_root: str | Path,
@@ -26,5 +34,28 @@ class ReferenceController:
     ) -> dict[str, object]:
         return self.reference_service.bind_pdf(workspace_root, reference_id, pdf_path)
 
-    def import_reference_file(self, workspace_root: str | Path, import_path: str | Path) -> dict[str, object]:
-        return self.reference_service.import_reference_file(workspace_root, import_path)
+    def import_reference_file(
+        self,
+        workspace_root: str | Path,
+        import_path: str | Path,
+        *,
+        tags: tuple[str, ...] = (),
+    ) -> dict[str, object]:
+        return self.reference_service.import_reference_file(
+            workspace_root,
+            import_path,
+            tags=tags,
+        )
+
+    def import_reference_directory(
+        self,
+        workspace_root: str | Path,
+        import_dir: str | Path,
+        *,
+        tags: tuple[str, ...] = (),
+    ) -> dict[str, object]:
+        return self.reference_service.import_reference_directory(
+            workspace_root,
+            import_dir,
+            tags=tags,
+        )

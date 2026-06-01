@@ -37,6 +37,7 @@ class NoteListDock(QDockWidget):
     note_selected = Signal(object)
     delete_note_requested = Signal(object)
     reference_selected = Signal(object)
+    reference_edit_requested = Signal(object)
     knowledge_selected = Signal(object)
     assign_to_planet_requested = Signal(object, str)
     new_note_requested = Signal()
@@ -384,7 +385,9 @@ class NoteListDock(QDockWidget):
         payload = dict(item.data(Qt.ItemDataRole.UserRole))
         menu = QMenu(self)
         open_action = QAction("Open Reference", menu)
+        edit_action = QAction("Edit Metadata", menu)
         menu.addAction(open_action)
+        menu.addAction(edit_action)
 
         display_path = payload.get("display_path")
         if display_path:
@@ -395,6 +398,7 @@ class NoteListDock(QDockWidget):
             )
 
         open_action.triggered.connect(lambda: self.reference_selected.emit(payload))
+        edit_action.triggered.connect(lambda: self.reference_edit_requested.emit(payload))
         menu.exec(self.reference_list.mapToGlobal(position))
 
     def _show_knowledge_context_menu(self, position) -> None:
@@ -495,14 +499,30 @@ class NoteListDock(QDockWidget):
         reference_id = str(reference.get("reference_id") or "")
         title = str(reference.get("title") or reference_id or "Untitled reference")
         year = reference.get("year")
+        authors = tuple(str(author) for author in reference.get("authors", ()) if str(author))
+        tags = tuple(str(tag) for tag in reference.get("tags", ()) if str(tag))
+        entry_type = str(reference.get("entry_type") or "reference")
         pdf_path = str(reference.get("pdf_path")) if reference.get("pdf_path") else None
         source_path = str(reference.get("source_path")) if reference.get("source_path") else None
         display_path = pdf_path or source_path
         label = f"{title} ({year})" if year not in (None, "") else title
-        tooltip = "\n".join(part for part in (reference_id, display_path or "") if part)
+        tooltip = "\n".join(
+            part
+            for part in (
+                reference_id,
+                ", ".join(authors),
+                f"tags: {', '.join(tags)}" if tags else "",
+                display_path or "",
+            )
+            if part
+        )
         return {
             "reference_id": reference_id,
             "title": title,
+            "authors": authors,
+            "tags": tags,
+            "year": year,
+            "entry_type": entry_type,
             "pdf_path": pdf_path,
             "source_path": source_path,
             "display_path": display_path,
