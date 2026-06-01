@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
-from app.pdf import serialize_pdf_selection
+from app.pdf.selection_serializer import serialize_pdf_selection
 from app.services.reference_service import ReferenceService
 from app.services.workspace_service import WorkspaceService
 
@@ -176,13 +177,25 @@ class PdfService:
         return resolved_pdf
 
     def _build_pdf_payload(self, workspace_root: Path, pdf_path: Path) -> dict[str, object]:
+        page_count = self._read_page_count(pdf_path)
         return {
             "title": pdf_path.name,
             "file_path": str(pdf_path),
             "relative_path": str(pdf_path.relative_to(workspace_root)),
             "file_size": pdf_path.stat().st_size,
-            "page_count": None,
+            "page_count": page_count,
         }
+
+    def _read_page_count(self, pdf_path: Path) -> int | None:
+        try:
+            pdf_bytes = pdf_path.read_bytes()
+        except OSError:
+            return None
+
+        matches = re.findall(rb"/Type\s*/Page\b", pdf_bytes)
+        if matches:
+            return len(matches)
+        return None
 
     def _annotations_manifest_path(self, agni_dir: Path) -> Path:
         return agni_dir / "pdf_annotations_manifest.json"

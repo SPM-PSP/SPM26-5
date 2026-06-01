@@ -12,3 +12,4 @@ dependencies:
   - mypy
   - pip:
       - pymupdf
+      - pymysql

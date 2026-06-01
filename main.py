@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QApplication
 from app.bootstrap.startup import bootstrap_app
 from app.ui.main_window import MainWindow
 
+# from app.database.tool import connect_to_database
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Agni desktop app")

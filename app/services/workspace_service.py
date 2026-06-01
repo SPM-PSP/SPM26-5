@@ -9,6 +9,7 @@ from pathlib import Path
 
 from app.bootstrap.config import AppConfig, WorkspaceConfig
 from app.bootstrap.paths import resolve_workspace_paths
+from database.tool import connect_to_database, initialize_database
 
 
 @dataclass(slots=True)
@@ -145,112 +146,11 @@ class WorkspaceService:
 
         return tuple(created_paths)
 
-    def connect_workspace_database(self, workspace_context: WorkspaceContext) -> sqlite3.Connection:
-        connection = sqlite3.connect(workspace_context.db_path)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys=ON;")
-        return connection
+    def connect_workspace_database(self, workspace_context: WorkspaceContext):
+        return connect_to_database(workspace_context.db_path)
 
     def _initialize_database(self, db_path: Path) -> None:
-        with sqlite3.connect(db_path) as connection:
-            connection.execute("PRAGMA journal_mode=WAL;")
-            connection.execute("PRAGMA foreign_keys=ON;")
-            connection.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS app_metadata (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                );
-
-                INSERT OR REPLACE INTO app_metadata(key, value)
-                VALUES ('workspace_version', '2');
-
-                CREATE TABLE IF NOT EXISTS notes (
-                    note_id TEXT PRIMARY KEY,
-                    relative_path TEXT NOT NULL UNIQUE,
-                    title TEXT NOT NULL,
-                    content TEXT NOT NULL DEFAULT '',
-                    planet TEXT,
-                    content_hash TEXT NOT NULL DEFAULT '',
-                    updated_at TEXT,
-                    file_mtime REAL
-                );
-
-                CREATE TABLE IF NOT EXISTS note_links (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    source_note_id TEXT NOT NULL,
-                    target_title TEXT NOT NULL,
-                    target_heading TEXT,
-                    alias TEXT,
-                    raw_link TEXT NOT NULL,
-                    FOREIGN KEY(source_note_id) REFERENCES notes(note_id) ON DELETE CASCADE
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_note_links_source_note_id
-                ON note_links(source_note_id);
-
-                CREATE INDEX IF NOT EXISTS idx_note_links_target_title
-                ON note_links(target_title);
-
-                CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
-                    note_id UNINDEXED,
-                    relative_path UNINDEXED,
-                    title,
-                    content
-                );
-
-                CREATE TABLE IF NOT EXISTS object_planets (
-                    object_kind TEXT NOT NULL,
-                    object_key TEXT NOT NULL,
-                    planet TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    PRIMARY KEY(object_kind, object_key)
-                );
-
-                CREATE TABLE IF NOT EXISTS references_catalog (
-                    reference_id TEXT PRIMARY KEY,
-                    title TEXT NOT NULL,
-                    authors_json TEXT NOT NULL DEFAULT '[]',
-                    year INTEGER,
-                    entry_type TEXT,
-                    source_format TEXT,
-                    source_path TEXT,
-                    pdf_path TEXT,
-                    created_at TEXT,
-                    updated_at TEXT
-                );
-
-                CREATE TABLE IF NOT EXISTS pdf_annotations (
-                    annotation_id TEXT PRIMARY KEY,
-                    reference_id TEXT NOT NULL,
-                    pdf_path TEXT NOT NULL,
-                    text TEXT NOT NULL,
-                    page_number INTEGER,
-                    page_label TEXT,
-                    rects_json TEXT NOT NULL DEFAULT '[]',
-                    comment TEXT,
-                    color TEXT,
-                    created_at TEXT NOT NULL
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_pdf_annotations_reference_id
-                ON pdf_annotations(reference_id);
-
-                CREATE TABLE IF NOT EXISTS citations_catalog (
-                    citation_id TEXT PRIMARY KEY,
-                    reference_id TEXT NOT NULL,
-                    annotation_id TEXT,
-                    token TEXT NOT NULL,
-                    page_label TEXT,
-                    note_path TEXT,
-                    created_at TEXT NOT NULL
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_citations_reference_id
-                ON citations_catalog(reference_id);
-                """
-            )
-            connection.commit()
+        initialize_database(db_path)
 
     def _synchronize_workspace_database(self, workspace_config: WorkspaceConfig) -> None:
         references_path = workspace_config.workspace_root / "references"
@@ -280,21 +180,34 @@ class WorkspaceService:
                 relative_path = str(note_path.relative_to(workspace_config.notes_dir))
                 note_id = note_path.stem
                 title = self._derive_note_title(content, note_path)
+                tags = self._extract_note_tags(content)
                 content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
                 planet = existing_planets.get(("note", note_id), self._infer_note_planet(note_path))
                 connection.execute(
                     """
-                    INSERT INTO notes(note_id, relative_path, title, content, planet, content_hash, updated_at, file_mtime)
-                    VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?)
+                    INSERT INTO notes(
+                        note_id, relative_path, title, content, tags_json,
+                        planet, content_hash, updated_at, file_mtime
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
                     """,
-                    (note_id, relative_path, title, content, planet, content_hash, note_path.stat().st_mtime),
+                    (
+                        note_id,
+                        relative_path,
+                        title,
+                        content,
+                        json.dumps(list(tags), ensure_ascii=False),
+                        planet,
+                        content_hash,
+                        note_path.stat().st_mtime,
+                    ),
                 )
                 connection.execute(
                     """
-                    INSERT INTO notes_fts(note_id, relative_path, title, content)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO notes_fts(note_id, relative_path, title, tags_json, content)
+                    VALUES (?, ?, ?, ?, ?)
                     """,
-                    (note_id, relative_path, title, content),
+                    (note_id, relative_path, title, json.dumps(list(tags), ensure_ascii=False), content),
                 )
                 connection.execute(
                     """
@@ -330,15 +243,16 @@ class WorkspaceService:
                 connection.execute(
                     """
                     INSERT INTO references_catalog(
-                        reference_id, title, authors_json, year, entry_type,
+                        reference_id, title, authors_json, tags_json, year, entry_type,
                         source_format, source_path, pdf_path, created_at, updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         reference_id,
                         str(record.get("title") or reference_id),
                         json.dumps(list(record.get("authors", [])), ensure_ascii=False),
+                        json.dumps(list(record.get("tags", [])), ensure_ascii=False),
                         record.get("year"),
                         record.get("entry_type"),
                         record.get("source_format"),
@@ -455,6 +369,40 @@ class WorkspaceService:
                 }
             )
         return links
+
+    def _extract_note_tags(self, content: str) -> tuple[str, ...]:
+        tags: list[str] = []
+        seen: set[str] = set()
+
+        def add_tag(raw: str) -> None:
+            normalized = raw.strip().lstrip("#").strip().casefold()
+            normalized = normalized.replace(" ", "-")
+            normalized = re.sub(r"[^a-z0-9_\-/\u4e00-\u9fff]+", "", normalized)
+            if not normalized or normalized in seen:
+                return
+            seen.add(normalized)
+            tags.append(normalized)
+
+        frontmatter_match = re.match(r"^---\s*\n(.*?)\n---\s*\n?", content, re.DOTALL)
+        if frontmatter_match:
+            for line in frontmatter_match.group(1).splitlines():
+                key, _, value = line.partition(":")
+                if key.strip().casefold() != "tags":
+                    continue
+                for part in value.strip().strip("[]").split(","):
+                    add_tag(part)
+
+        for line in content.splitlines():
+            stripped = line.strip()
+            if re.match(r"^#{1,6}\s", stripped):
+                continue
+            if stripped.casefold().startswith("tags:"):
+                for part in stripped.split(":", 1)[1].split(","):
+                    add_tag(part)
+            for match in re.finditer(r"(?<!\w)#([A-Za-z0-9_\-/\u4e00-\u9fff]+)", line):
+                add_tag(match.group(1))
+
+        return tuple(tags)
 
     def _success(self, message: str, **data: object) -> dict[str, object]:
         return {
