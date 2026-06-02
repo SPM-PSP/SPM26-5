@@ -477,7 +477,7 @@ class KnowledgeGraphWidget(QWidget):
         self.back_button = QPushButton("返回", self)
         self.back_button.setFixedWidth(58)
         self.back_button.clicked.connect(self.go_back)
-        self.layer_label = QLabel("星系", self)
+        self.layer_label = QLabel("工作区", self)
         self.layer_label.setObjectName("section_label")
         header_layout.addWidget(self.back_button)
         header_layout.addWidget(self.layer_label, 1)
@@ -562,7 +562,7 @@ class KnowledgeGraphWidget(QWidget):
         self._stop_animations()
         self.current_layer = "galaxy"
         self.current_planet = ""
-        self.layer_label.setText("星系")
+        self.layer_label.setText("当前工作区")
         self.back_button.setEnabled(False)
         self._clear_scene_for_render()
         if self.galaxy is None:
@@ -577,7 +577,7 @@ class KnowledgeGraphWidget(QWidget):
         self._stop_animations()
         self.current_layer = "cover_overview"
         self.current_planet = ""
-        self.layer_label.setText("星系总览")
+        self.layer_label.setText("工作区总览")
         self.back_button.setEnabled(False)
         self._clear_scene_for_render()
         if not self._galaxy_systems:
@@ -610,7 +610,7 @@ class KnowledgeGraphWidget(QWidget):
         self.stars_by_planet = dict(stars_by_planet)
         self.current_layer = "cover_system"
         self.current_planet = ""
-        self.layer_label.setText(f"{galaxy.title} 星系")
+        self.layer_label.setText(f"{galaxy.title} / 结构概览")
         self.back_button.setEnabled(True)
         self._clear_scene_for_render()
         self._set_scene_rect()
@@ -633,7 +633,7 @@ class KnowledgeGraphWidget(QWidget):
         self._stop_animations()
         self.current_layer = "cover_star_detail"
         self.current_planet = star.planet
-        self.layer_label.setText(f"{star.title} -> 卫星")
+        self.layer_label.setText(f"{star.title} / 关联")
         self.back_button.setEnabled(True)
         self._clear_scene_for_render()
         self._set_scene_rect()
@@ -681,6 +681,7 @@ class KnowledgeGraphWidget(QWidget):
             system_items.append(orbit)
             orbit_nodes = list(stars_by_planet.get(planet.title, []))
             orbit_nodes = self._deduplicate_orbit_nodes(orbit_nodes)
+            orbit_nodes = self._visible_orbit_nodes(planet, orbit_nodes)
             orbit_slots = max(2, len(orbit_nodes) + 1)
 
             marker_node = self._planet_marker_node(planet)
@@ -747,7 +748,7 @@ class KnowledgeGraphWidget(QWidget):
             title=planet.title,
             color=planet.color,
             path=planet.path,
-            description=planet.description or "行星类别",
+            description=planet.description or "分类",
             planet=planet.title,
             tags=planet.tags,
         )
@@ -765,6 +766,27 @@ class KnowledgeGraphWidget(QWidget):
             seen.add(key)
             result.append(node)
         return result
+
+    def _visible_orbit_nodes(
+        self,
+        planet: KnowledgeGraphNode,
+        nodes: list[KnowledgeGraphNode],
+    ) -> list[KnowledgeGraphNode]:
+        if not self._cover_mode or len(nodes) <= 10:
+            return nodes
+        visible = nodes[:9]
+        hidden_count = len(nodes) - len(visible)
+        visible.append(
+            KnowledgeGraphNode(
+                kind=KnowledgeObjectKind.SATELLITE,
+                title=f"更多 {hidden_count} 个",
+                color="#CBD5E1",
+                description=f"{planet.title} 下还有 {hidden_count} 个资源。可在左侧资源库中查看完整列表。",
+                planet=planet.title,
+                tags=("更多",),
+            )
+        )
+        return visible
 
     def _orbit_angle(
         self,
@@ -885,7 +907,7 @@ class KnowledgeGraphWidget(QWidget):
         self._stop_animations()
         self.current_layer = "planets"
         self.current_planet = ""
-        self.layer_label.setText("行星")
+        self.layer_label.setText("分类")
         self.back_button.setEnabled(True)
         self._clear_scene_for_render()
         self._set_scene_rect()
@@ -899,13 +921,13 @@ class KnowledgeGraphWidget(QWidget):
         self._stop_animations()
         self.current_layer = "planet_detail"
         self.current_planet = planet_title
-        self.layer_label.setText(f"{planet_title} -> 星球")
+        self.layer_label.setText(f"{planet_title} / 资源")
         self.back_button.setEnabled(True)
         self._clear_scene_for_render()
         self._set_scene_rect()
         stars = self.stars_by_planet.get(planet_title, [])
         if not stars:
-            self._add_center_text("暂无星球")
+            self._add_center_text("暂无资源")
             self._animate_items_in()
             self._fit_scene()
             return
@@ -920,7 +942,7 @@ class KnowledgeGraphWidget(QWidget):
         self._stop_animations()
         self.current_layer = "star_detail"
         self.current_planet = star.planet
-        self.layer_label.setText(f"{star.title} -> 卫星")
+        self.layer_label.setText(f"{star.title} / 关联")
         self.back_button.setEnabled(True)
         self._clear_scene_for_render()
         self._set_scene_rect()
@@ -1020,15 +1042,15 @@ class KnowledgeGraphWidget(QWidget):
         menu = self._make_graph_menu()
 
         if node.kind == KnowledgeObjectKind.GALAXY:
-            add_planet_action = QAction("新增行星", menu)
-            delete_planet_action = QAction("删除行星", menu)
+            add_planet_action = QAction("新增分类", menu)
+            delete_planet_action = QAction("删除分类", menu)
             menu.addAction(add_planet_action)
             menu.addAction(delete_planet_action)
             add_planet_action.triggered.connect(lambda: self.add_planet_requested.emit(payload))
             delete_planet_action.triggered.connect(lambda: self.delete_planet_requested.emit(payload))
         elif node.kind == KnowledgeObjectKind.PLANET:
-            add_star_action = QAction("新增星球", menu)
-            delete_star_action = QAction("删除星球", menu)
+            add_star_action = QAction("新增资源", menu)
+            delete_star_action = QAction("删除资源", menu)
             menu.addAction(add_star_action)
             menu.addAction(delete_star_action)
             add_star_action.triggered.connect(lambda: self.add_star_requested.emit(payload))
@@ -1045,7 +1067,7 @@ class KnowledgeGraphWidget(QWidget):
             open_action.triggered.connect(lambda: self.node_selected.emit(self._selection_from_node(node)))
             if node.path is not None:
                 copy_path_action.triggered.connect(lambda: QApplication.clipboard().setText(str(node.path)))
-            delete_star_action = QAction("删除星球", menu)
+            delete_star_action = QAction("删除资源", menu)
             menu.addAction(delete_star_action)
             delete_star_action.triggered.connect(lambda: self.delete_star_requested.emit(payload))
         elif node.kind == KnowledgeObjectKind.STAR_REFERENCE:
@@ -1125,7 +1147,7 @@ class KnowledgeGraphWidget(QWidget):
         return menu
 
     def _build_assignment_menu(self, parent: QMenu, payload: dict[str, object]) -> QMenu:
-        assign_menu = self._make_graph_menu("归入行星", parent)
+        assign_menu = self._make_graph_menu("归入分类", parent)
         for planet in self._assignment_planets():
             action = QAction(planet.title, assign_menu)
             assign_menu.addAction(action)
@@ -1248,7 +1270,7 @@ class KnowledgeGraphWidget(QWidget):
         system_items.append(star_item)
         satellites = list(star.satellites[:18])
         if not satellites:
-            self._add_text_at("暂无卫星", QPointF(0, center_radius + 92))
+            self._add_text_at("暂无关联", QPointF(0, center_radius + 92))
             star_item.drag_followers = system_items
             return
 
@@ -1376,7 +1398,7 @@ class KnowledgeGraphWidget(QWidget):
 
     def _satellite_layer_label(self, layer_index: int) -> str:
         labels = ("内容", "关系", "元数据")
-        return labels[layer_index] if 0 <= layer_index < len(labels) else "卫星"
+        return labels[layer_index] if 0 <= layer_index < len(labels) else "关联"
 
     def _satellite_node(self, star: KnowledgeGraphNode, satellite) -> KnowledgeGraphNode:
         category = self._satellite_category(satellite)
@@ -1442,15 +1464,15 @@ class KnowledgeGraphWidget(QWidget):
 
     def _satellite_category_label(self, category: str) -> str:
         return {
-            "heading": "标题卫星",
-            "excerpt": "摘录卫星",
-            "annotation": "批注卫星",
-            "citation": "引用卫星",
-            "reference": "文献卫星",
-            "backlink": "反链卫星",
-            "link": "链接卫星",
-            "tag": "标签卫星",
-        }.get(category, "信息卫星")
+            "heading": "标题关联",
+            "excerpt": "摘录关联",
+            "annotation": "批注关联",
+            "citation": "引用关联",
+            "reference": "文献关联",
+            "backlink": "反链关联",
+            "link": "链接关联",
+            "tag": "标签关联",
+        }.get(category, "信息关联")
 
     def _add_star_with_satellites(self, star: KnowledgeGraphNode, position: QPointF) -> None:
         star_item = self._add_circle(star, position, 30)

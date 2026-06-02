@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QWidget
@@ -209,6 +210,9 @@ LIGHT_THEME = {
 
 def build_app_stylesheet() -> str:
     t = LIGHT_THEME
+    icon_root = Path(__file__).resolve().parent / "assets"
+    tab_left_arrow = (icon_root / "tab_scroll_left.svg").as_posix()
+    tab_right_arrow = (icon_root / "tab_scroll_right.svg").as_posix()
     return f"""
     QMainWindow#agni_main_window {{
         background: {t["app_bg"]};
@@ -449,6 +453,39 @@ def build_app_stylesheet() -> str:
         border-bottom: 2px solid {t["primary"]};
     }}
 
+    QTabBar::scroller {{
+        width: 58px;
+    }}
+
+    QTabBar QToolButton {{
+        background: {t["window_bg"]};
+        border: 1px solid {t["border_normal"]};
+        border-radius: 8px;
+        min-width: 26px;
+        max-width: 26px;
+        min-height: 50px;
+        max-height: 50px;
+        margin: 0 2px;
+        padding: 0;
+    }}
+
+    QTabBar QToolButton:hover {{
+        background: {t["hover_bg"]};
+        border-color: {t["border_strong"]};
+    }}
+
+    QTabBar QToolButton::left-arrow {{
+        image: url("{tab_left_arrow}");
+        width: 12px;
+        height: 12px;
+    }}
+
+    QTabBar QToolButton::right-arrow {{
+        image: url("{tab_right_arrow}");
+        width: 12px;
+        height: 12px;
+    }}
+
     QToolButton#tab_close_button {{
         background: transparent;
         border: 0;
@@ -546,6 +583,7 @@ def build_app_stylesheet() -> str:
     QListWidget::item:selected,
     QTreeWidget::item:selected {{
         background: {t["selected_bg"]};
+        border-left: 2px solid {t["primary"]};
         color: {t["primary"]};
     }}
 

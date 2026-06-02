@@ -113,9 +113,11 @@ class NoteListDock(QDockWidget):
         self.model_page = self._build_model_page()
         self.notes_page = self._build_notes_page()
         self.references_page = self._build_references_page()
-        self.tabs.addTab(self.model_page, "模型")
+        self.tags_page = self._build_tags_page()
+        self.tabs.addTab(self.model_page, "全部")
         self.tabs.addTab(self.notes_page, "笔记")
         self.tabs.addTab(self.references_page, "文献")
+        self.tabs.addTab(self.tags_page, "标签")
         root_layout.addWidget(self.tabs, 1)
 
         self.setWidget(surface)
@@ -126,18 +128,35 @@ class NoteListDock(QDockWidget):
         layout.setContentsMargins(0, 8, 0, 0)
         layout.setSpacing(8)
 
-        hint = QLabel("星系 → 行星 → 星球 → 卫星", page)
+        hint = QLabel("工作区 → 分类 → 对象", page)
         hint.setObjectName("section_label")
         layout.addWidget(hint)
 
-        self.open_star_map_button = QPushButton("打开全屏星图", page)
-        self.open_star_map_button.setToolTip("进入全屏星图管理工作区、行星、星球和卫星")
+        self.open_star_map_button = QPushButton("打开知识结构图", page)
+        self.open_star_map_button.setToolTip("进入星图查看当前工作区的分类、笔记、文献和关联")
         layout.addWidget(self.open_star_map_button)
 
         self.knowledge_tree = QTreeWidget(page)
         self.knowledge_tree.setHeaderHidden(True)
+        self.knowledge_tree.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.knowledge_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         layout.addWidget(self.knowledge_tree, 1)
+
+        return page
+
+    def _build_tags_page(self) -> QWidget:
+        page = QWidget(self)
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 8, 0, 0)
+        layout.setSpacing(8)
+
+        self.tag_filter = QLineEdit(page)
+        self.tag_filter.setPlaceholderText("搜索标签...")
+        layout.addWidget(self.tag_filter)
+
+        self.tag_list = QListWidget(page)
+        self.tag_list.setTextElideMode(Qt.TextElideMode.ElideRight)
+        layout.addWidget(self.tag_list, 1)
 
         return page
 
@@ -163,6 +182,7 @@ class NoteListDock(QDockWidget):
 
         self.note_list = QListWidget(page)
         self.note_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.note_list.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.note_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         layout.addWidget(self.note_list, 1)
 
@@ -180,6 +200,7 @@ class NoteListDock(QDockWidget):
 
         self.reference_list = QListWidget(page)
         self.reference_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.reference_list.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.reference_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         layout.addWidget(self.reference_list, 1)
 
@@ -191,6 +212,7 @@ class NoteListDock(QDockWidget):
         self.knowledge_tree.customContextMenuRequested.connect(self._show_knowledge_context_menu)
         self.note_filter.textChanged.connect(self._filter_notes)
         self.reference_filter.textChanged.connect(self._filter_references)
+        self.tag_filter.textChanged.connect(self._filter_tags)
         self.note_list.itemActivated.connect(self._emit_note_selected)
         self.note_list.itemClicked.connect(self._emit_note_selected)
         self.note_list.customContextMenuRequested.connect(self._show_note_context_menu)
@@ -217,6 +239,7 @@ class NoteListDock(QDockWidget):
         self.refresh_knowledge_model()
         self.refresh_notes()
         self.refresh_references()
+        self.refresh_tags()
 
     def set_knowledge_model(self, galaxy: dict[str, object] | None) -> None:
         self._controller_galaxy = dict(galaxy or {})
@@ -293,7 +316,7 @@ class NoteListDock(QDockWidget):
         if self.workspace_root is None:
             return
 
-        title, accepted = QInputDialog.getText(self, "新增行星", "行星名称：")
+        title, accepted = QInputDialog.getText(self, "新增分类", "分类名称：")
         title = title.strip()
         if not accepted or not title:
             return
@@ -301,7 +324,7 @@ class NoteListDock(QDockWidget):
         existing_titles = {self._display_planet_title(key) for key in DEFAULT_PLANET_KEYS}
         existing_titles.update({UNASSIGNED_PLANET_TITLE, *self.custom_planets})
         if title in existing_titles:
-            QMessageBox.information(self, "行星已存在", f"“{title}”已经在当前星系中。")
+            QMessageBox.information(self, "分类已存在", f"“{title}”已经在当前工作区中。")
             return
 
         self.custom_planets = add_custom_planet(self.workspace_root, title)
@@ -311,7 +334,7 @@ class NoteListDock(QDockWidget):
     def _delete_selected_custom_planet(self) -> None:
         planet_key = self._selected_planet_key()
         if planet_key is None:
-            QMessageBox.information(self, "选择行星", "请先在“结构”视图中选中一个自定义行星。")
+            QMessageBox.information(self, "选择分类", "请先在“全部”视图中选中一个自定义分类。")
             return
 
         self._delete_custom_planet(planet_key)
@@ -322,19 +345,19 @@ class NoteListDock(QDockWidget):
 
         planet_title = self._display_planet_title(planet_key)
         if planet_key in DEFAULT_PLANET_KEYS or planet_title == UNASSIGNED_PLANET_TITLE:
-            QMessageBox.information(self, "默认行星", "默认行星用于基础分类，暂不支持删除。")
+            QMessageBox.information(self, "默认分类", "默认分类用于基础资源组织，暂不支持删除。")
             return
 
         if self._graph_stars_by_planet.get(planet_title):
             QMessageBox.information(
                 self,
-                "行星非空",
-                "该行星下还有星球。请先把这些对象归入其他行星，再删除该行星。",
+                "分类非空",
+                "该分类下还有资源。请先把这些对象归入其他分类，再删除该分类。",
             )
             return
 
         if planet_title not in self.custom_planets:
-            QMessageBox.information(self, "无法删除", "当前只能删除通过 UI 新增的自定义行星。")
+            QMessageBox.information(self, "无法删除", "当前只能删除通过 UI 新增的自定义分类。")
             return
 
         self.custom_planets = remove_custom_planet(self.workspace_root, planet_title)
@@ -356,7 +379,7 @@ class NoteListDock(QDockWidget):
 
         graph_planets: list[KnowledgeGraphNode] = []
         graph_stars_by_planet: dict[str, list[KnowledgeGraphNode]] = {}
-        galaxy = QTreeWidgetItem([f"星系  {self.workspace_root.name}"])
+        galaxy = QTreeWidgetItem([f"工作区  {self.workspace_root.name}"])
         galaxy.setToolTip(0, str(self.workspace_root))
         galaxy.setData(0, KNOWLEDGE_KIND_ROLE, KnowledgeObjectKind.GALAXY.value)
         galaxy.setData(0, KNOWLEDGE_PATH_ROLE, str(self.workspace_root))
@@ -369,11 +392,11 @@ class NoteListDock(QDockWidget):
             if not self._planet_is_hidden(planet[0])
         ]
         planets.extend(
-            (title.strip(), title.strip(), "自定义行星", "")
+            (title.strip(), title.strip(), "自定义分类", "")
             for title in self.custom_planets
             if title.strip()
         )
-        planets.append((UNASSIGNED_PLANET_KEY, UNASSIGNED_PLANET_TITLE, "尚未归入具体行星的对象", ""))
+        planets.append((UNASSIGNED_PLANET_KEY, UNASSIGNED_PLANET_TITLE, "尚未归入具体分类的对象", ""))
         planet_items: dict[str, QTreeWidgetItem] = {}
         for planet_key, title, description, filter_text in planets:
             title = title.strip()
@@ -381,7 +404,7 @@ class NoteListDock(QDockWidget):
                 continue
             if planet_key != UNASSIGNED_PLANET_KEY and self._planet_is_hidden(planet_key):
                 continue
-            planet = QTreeWidgetItem([f"行星  {title}"])
+            planet = QTreeWidgetItem([f"分类  {title}"])
             planet.setData(0, KNOWLEDGE_KIND_ROLE, KnowledgeObjectKind.PLANET.value)
             planet.setData(0, KNOWLEDGE_DESCRIPTION_ROLE, description)
             planet.setData(0, PLANET_KEY_ROLE, planet_key)
@@ -403,11 +426,11 @@ class NoteListDock(QDockWidget):
             planet_title = self._display_planet_title(self._guess_planet_for_path(note_path))
             note_title = self._note_display_title(note_path)
             satellites = tuple(self._extract_note_satellites(note_path))
-            star = QTreeWidgetItem([f"星球  {note_title}"])
+            star = QTreeWidgetItem([f"{self._resource_kind_label(note_title, note_path, 'note', planet_title)}  {note_title}"])
             star.setToolTip(0, str(note_path))
             star.setData(0, KNOWLEDGE_KIND_ROLE, KnowledgeObjectKind.STAR_NOTE.value)
             star.setData(0, KNOWLEDGE_PATH_ROLE, str(note_path))
-            star.setData(0, KNOWLEDGE_DESCRIPTION_ROLE, "Markdown 笔记星球")
+            star.setData(0, KNOWLEDGE_DESCRIPTION_ROLE, "Markdown 笔记")
             planet_items.get(planet_title, planet_items[UNASSIGNED_PLANET_TITLE]).addChild(star)
             graph_stars_by_planet.setdefault(planet_title, []).append(
                 KnowledgeGraphNode(
@@ -415,7 +438,7 @@ class NoteListDock(QDockWidget):
                     title=note_title,
                     color=PLANET_COLORS.get(planet_title, PLANET_DEFAULT_COLOR),
                     path=note_path,
-                    description="Markdown 笔记星球",
+                    description="Markdown 笔记",
                     planet=planet_title,
                     tags=("笔记", "Markdown"),
                     satellites=satellites,
@@ -423,7 +446,7 @@ class NoteListDock(QDockWidget):
             )
 
             for satellite in satellites:
-                item = QTreeWidgetItem([f"卫星  {satellite.title}"])
+                item = QTreeWidgetItem([f"关联  {satellite.title}"])
                 item.setToolTip(0, satellite.preview)
                 item.setData(0, KNOWLEDGE_KIND_ROLE, KnowledgeObjectKind.SATELLITE.value)
                 item.setData(0, KNOWLEDGE_PATH_ROLE, str(note_path))
@@ -432,11 +455,11 @@ class NoteListDock(QDockWidget):
                 star.addChild(item)
 
         for ref_path in self._iter_reference_paths():
-            star = QTreeWidgetItem([f"星球  {ref_path.name}"])
+            star = QTreeWidgetItem([f"文献  {ref_path.name}"])
             star.setToolTip(0, str(ref_path))
             star.setData(0, KNOWLEDGE_KIND_ROLE, KnowledgeObjectKind.STAR_REFERENCE.value)
             star.setData(0, KNOWLEDGE_PATH_ROLE, str(ref_path))
-            star.setData(0, KNOWLEDGE_DESCRIPTION_ROLE, "文献或附件星球")
+            star.setData(0, KNOWLEDGE_DESCRIPTION_ROLE, "文献或附件")
             reading_title = self._display_planet_title("Reading")
             target_planet_title = reading_title if reading_title in planet_items else UNASSIGNED_PLANET_TITLE
             planet_items[target_planet_title].addChild(star)
@@ -454,14 +477,14 @@ class NoteListDock(QDockWidget):
                     title=ref_path.name,
                     color=PLANET_COLORS.get(target_planet_title, PLANET_DEFAULT_COLOR),
                     path=ref_path,
-                    description="文献或附件星球",
+                    description="文献或附件",
                     planet=target_planet_title,
                     tags=("文献", ref_path.suffix.lower().lstrip(".")),
                     satellites=(satellite_item,),
                 )
             )
 
-            satellite = QTreeWidgetItem([f"卫星  {satellite_item.title}"])
+            satellite = QTreeWidgetItem([f"关联  {satellite_item.title}"])
             satellite.setData(0, KNOWLEDGE_KIND_ROLE, KnowledgeObjectKind.SATELLITE.value)
             satellite.setData(0, KNOWLEDGE_PATH_ROLE, str(ref_path))
             satellite.setData(0, KNOWLEDGE_DESCRIPTION_ROLE, satellite_item.preview)
@@ -487,7 +510,7 @@ class NoteListDock(QDockWidget):
         workspace_path = Path(str(galaxy_payload.get("workspace_root") or self.workspace_root))
         galaxy_title = str(galaxy_payload.get("title") or workspace_path.name)
 
-        galaxy = QTreeWidgetItem([f"星系  {galaxy_title}"])
+        galaxy = QTreeWidgetItem([f"工作区  {galaxy_title}"])
         galaxy.setToolTip(0, str(workspace_path))
         galaxy.setData(0, KNOWLEDGE_KIND_ROLE, KnowledgeObjectKind.GALAXY.value)
         galaxy.setData(0, KNOWLEDGE_PATH_ROLE, str(workspace_path))
@@ -511,7 +534,7 @@ class NoteListDock(QDockWidget):
             if planet_title in seen_planets:
                 continue
             seen_planets.add(planet_title)
-            planet = QTreeWidgetItem([f"行星  {planet_title}"])
+            planet = QTreeWidgetItem([f"分类  {planet_title}"])
             planet.setData(0, KNOWLEDGE_KIND_ROLE, KnowledgeObjectKind.PLANET.value)
             planet.setData(0, KNOWLEDGE_DESCRIPTION_ROLE, planet_description)
             planet.setData(0, PLANET_KEY_ROLE, planet_key)
@@ -562,9 +585,9 @@ class NoteListDock(QDockWidget):
                 if self._planet_is_hidden(target_planet_title):
                     target_planet_title = UNASSIGNED_PLANET_TITLE
                 if target_planet_title not in planet_items:
-                    target_planet = QTreeWidgetItem([f"行星  {target_planet_title}"])
+                    target_planet = QTreeWidgetItem([f"分类  {target_planet_title}"])
                     target_planet.setData(0, KNOWLEDGE_KIND_ROLE, KnowledgeObjectKind.PLANET.value)
-                    target_planet.setData(0, KNOWLEDGE_DESCRIPTION_ROLE, "自定义行星")
+                    target_planet.setData(0, KNOWLEDGE_DESCRIPTION_ROLE, "自定义分类")
                     target_planet.setData(0, PLANET_KEY_ROLE, override_key or target_planet_title)
                     galaxy.addChild(target_planet)
                     planet_items[target_planet_title] = target_planet
@@ -574,7 +597,7 @@ class NoteListDock(QDockWidget):
                             kind=KnowledgeObjectKind.PLANET,
                             title=target_planet_title,
                             color=PLANET_COLORS.get(target_planet_title, PLANET_DEFAULT_COLOR),
-                            description="自定义行星",
+                            description="自定义分类",
                             planet=target_planet_title,
                         )
                     )
@@ -592,12 +615,12 @@ class NoteListDock(QDockWidget):
                         tuple(self._extract_note_satellites(star_path)),
                     )
 
-                star = QTreeWidgetItem([f"星球  {star_title}"])
+                star = QTreeWidgetItem([f"{self._resource_kind_label(star_title, star_path, object_kind, target_planet_title)}  {star_title}"])
                 if star_path is not None:
                     star.setToolTip(0, str(star_path))
                     star.setData(0, KNOWLEDGE_PATH_ROLE, str(star_path))
                 star.setData(0, KNOWLEDGE_KIND_ROLE, star_kind.value)
-                star.setData(0, KNOWLEDGE_DESCRIPTION_ROLE, "Markdown 笔记星球" if object_kind == "note" else "文献或附件星球")
+                star.setData(0, KNOWLEDGE_DESCRIPTION_ROLE, "Markdown 笔记" if object_kind == "note" else "文献或附件")
                 star.setData(0, KNOWLEDGE_OBJECT_KIND_ROLE, object_kind)
                 star.setData(0, KNOWLEDGE_OBJECT_KEY_ROLE, object_key)
                 planet_for_star.addChild(star)
@@ -616,7 +639,7 @@ class NoteListDock(QDockWidget):
                 )
 
                 for satellite in satellites:
-                    item = QTreeWidgetItem([f"卫星  {satellite.title}"])
+                    item = QTreeWidgetItem([f"关联  {satellite.title}"])
                     item.setToolTip(0, satellite.preview)
                     item.setData(0, KNOWLEDGE_KIND_ROLE, KnowledgeObjectKind.SATELLITE.value)
                     if star_path is not None:
@@ -633,9 +656,9 @@ class NoteListDock(QDockWidget):
                 continue
             if custom_planet in seen_planets:
                 continue
-            planet = QTreeWidgetItem([f"行星  {custom_planet}"])
+            planet = QTreeWidgetItem([f"分类  {custom_planet}"])
             planet.setData(0, KNOWLEDGE_KIND_ROLE, KnowledgeObjectKind.PLANET.value)
-            planet.setData(0, KNOWLEDGE_DESCRIPTION_ROLE, "自定义行星")
+            planet.setData(0, KNOWLEDGE_DESCRIPTION_ROLE, "自定义分类")
             planet.setData(0, PLANET_KEY_ROLE, custom_planet)
             galaxy.addChild(planet)
             seen_planets.add(custom_planet)
@@ -644,7 +667,7 @@ class NoteListDock(QDockWidget):
                     kind=KnowledgeObjectKind.PLANET,
                     title=custom_planet,
                     color=PLANET_COLORS.get(custom_planet, PLANET_DEFAULT_COLOR),
-                    description="自定义行星",
+                    description="自定义分类",
                     planet=custom_planet,
                 )
             )
@@ -744,6 +767,26 @@ class NoteListDock(QDockWidget):
 
         self._filter_references(self.reference_filter.text())
 
+    def refresh_tags(self) -> None:
+        self.tag_list.clear()
+        tags: dict[str, int] = {}
+        for note_path in self._iter_note_paths():
+            for satellite in self._extract_note_satellites(note_path):
+                if satellite.kind != "tag":
+                    continue
+                tag = satellite.title.lstrip("#").strip()
+                if tag:
+                    tags[tag] = tags.get(tag, 0) + 1
+
+        if not tags:
+            self._add_disabled_item(self.tag_list, "暂无标签")
+            return
+
+        for tag, count in sorted(tags.items(), key=lambda item: item[0].lower()):
+            self.tag_list.addItem(QListWidgetItem(f"# {tag}  ·  {count}"))
+
+        self._filter_tags(self.tag_filter.text())
+
     def select_note_path(self, note_path: str | Path) -> None:
         expected = str(note_path)
         for row in range(self.note_list.count()):
@@ -769,6 +812,9 @@ class NoteListDock(QDockWidget):
 
     def _filter_references(self, query: str) -> None:
         self._filter_list(self.reference_list, query)
+
+    def _filter_tags(self, query: str) -> None:
+        self._filter_list(self.tag_list, query)
 
     def _filter_list(self, list_widget: QListWidget, query: str) -> None:
         normalized = query.strip().lower()
@@ -807,7 +853,7 @@ class NoteListDock(QDockWidget):
         open_action = QAction("打开", menu)
         delete_action = QAction("删除", menu)
         copy_path_action = QAction("复制路径", menu)
-        assign_menu = QMenu("归入行星", menu)
+        assign_menu = QMenu("归入分类", menu)
         assign_actions = {
             planet_key: QAction(planet_title, assign_menu)
             for planet_key, planet_title in self._assignment_planets()
@@ -867,9 +913,9 @@ class NoteListDock(QDockWidget):
         menu = QMenu(self)
         open_action = QAction("打开 / 查看", menu)
         copy_path_action = QAction("复制路径", menu)
-        add_planet_action = QAction("新增行星", menu)
-        delete_planet_action = QAction("删除该行星", menu)
-        assign_menu = QMenu("归入行星", menu)
+        add_planet_action = QAction("新增分类", menu)
+        delete_planet_action = QAction("删除该分类", menu)
+        assign_menu = QMenu("归入分类", menu)
         assign_actions = {
             planet_key: QAction(planet_title, assign_menu)
             for planet_key, planet_title in self._assignment_planets()
@@ -937,9 +983,7 @@ class NoteListDock(QDockWidget):
         path_value = item.data(0, KNOWLEDGE_PATH_ROLE)
         path = Path(path_value) if path_value else None
         description = item.data(0, KNOWLEDGE_DESCRIPTION_ROLE) or ""
-        title = item.text(0).replace("星系  ", "").replace("行星  ", "").replace(
-            "星球  ", ""
-        ).replace("卫星  ", "")
+        title = self._strip_resource_prefix(item.text(0))
         return KnowledgeSelection(
             kind=KnowledgeObjectKind(kind_value),
             title=title,
@@ -962,7 +1006,7 @@ class NoteListDock(QDockWidget):
                     children.append(child)
 
         for child in children:
-            title = child.text(0).replace("卫星  ", "")
+            title = self._strip_resource_prefix(child.text(0))
             line_number = child.data(0, KNOWLEDGE_LINE_ROLE)
             satellites.append(
                 SatelliteItem(
@@ -1006,17 +1050,59 @@ class NoteListDock(QDockWidget):
             if key == clean_key:
                 return description
         if clean_key in {UNASSIGNED_PLANET_KEY, "未归类"}:
-            return "尚未归入具体行星的对象"
-        return "自定义行星"
+            return "尚未归入具体分类的对象"
+        return "自定义分类"
 
     def _selected_planet_key(self) -> str | None:
         item = self.knowledge_tree.currentItem()
         while item is not None:
             if item.data(0, KNOWLEDGE_KIND_ROLE) == KnowledgeObjectKind.PLANET.value:
                 key = item.data(0, PLANET_KEY_ROLE)
-                return str(key) if key else item.text(0).replace("行星  ", "")
+                return str(key) if key else self._strip_resource_prefix(item.text(0))
             item = item.parent()
         return None
+
+    def _strip_resource_prefix(self, text: str) -> str:
+        for prefix in (
+            "工作区  ",
+            "分类  ",
+            "笔记  ",
+            "文献  ",
+            "主题  ",
+            "资源  ",
+            "关联  ",
+            "星系  ",
+            "行星  ",
+            "星球  ",
+            "卫星  ",
+        ):
+            if text.startswith(prefix):
+                return text[len(prefix) :]
+        return text
+
+    def _resource_kind_label(
+        self,
+        title: str,
+        path: Path | None,
+        object_kind: str,
+        planet_title: str,
+    ) -> str:
+        if object_kind == "reference":
+            return "文献"
+
+        haystack = f"{title} {path.name if path is not None else ''}".lower()
+        planet = planet_title.lower()
+        if planet_title == self._display_planet_title("Research") or any(
+            token in haystack for token in ("研究", "research", "topic", "主题")
+        ):
+            return "主题"
+        if planet.startswith("research"):
+            return "主题"
+        if planet_title == self._display_planet_title("Reading") or any(
+            token in haystack for token in ("pdf", "avila", "srs_template", "r1", "r2", "r3", "r4")
+        ):
+            return "文献"
+        return "笔记"
 
     def _iter_note_paths(self) -> list[Path]:
         if self.notes_dir is None or not self.notes_dir.exists():

@@ -56,11 +56,21 @@ class OutlineDock(QDockWidget):
         self.tabs.addTab(self._build_outline_page(), "大纲")
         self.tabs.addTab(self._build_pdf_page(), "PDF")
         self.tabs.addTab(self._build_metadata_page(), "元数据")
-        self.tabs.addTab(self._build_satellite_page(), "卫星")
+        self.tabs.addTab(self._build_satellite_page(), "关联")
         self.tabs.addTab(self._build_tag_page(), "标签")
         root_layout.addWidget(self.tabs, 1)
 
         self.setWidget(surface)
+        self._show_initial_empty_states()
+
+    def _show_initial_empty_states(self) -> None:
+        self.satellite_list.clear()
+        self._add_disabled_list_item(
+            self.satellite_list,
+            "暂无关联对象\n可通过 [[双向链接]] 或 @文献引用建立关系",
+        )
+        self.tag_list.clear()
+        self._add_disabled_list_item(self.tag_list, "暂无标签\n可在正文中使用 #标签 进行标记")
 
     def _build_outline_page(self) -> QWidget:
         page = QWidget(self)
@@ -70,6 +80,7 @@ class OutlineDock(QDockWidget):
 
         self.outline_tree = QTreeWidget(page)
         self.outline_tree.setHeaderHidden(True)
+        self.outline_tree.setTextElideMode(Qt.TextElideMode.ElideRight)
         layout.addWidget(self.outline_tree, 1)
 
         return page
@@ -95,15 +106,16 @@ class OutlineDock(QDockWidget):
         layout.setSpacing(8)
 
         self.satellite_list = QListWidget(page)
+        self.satellite_list.setTextElideMode(Qt.TextElideMode.ElideRight)
         layout.addWidget(self.satellite_list, 1)
 
-        detail_title = QLabel("卫星内容", page)
+        detail_title = QLabel("关联内容", page)
         detail_title.setObjectName("section_label")
         layout.addWidget(detail_title)
 
         self.satellite_detail = QTextEdit(page)
         self.satellite_detail.setReadOnly(True)
-        self.satellite_detail.setPlaceholderText("点击上方卫星条目查看内容。")
+        self.satellite_detail.setPlaceholderText("点击上方关联条目查看内容。")
         self.satellite_detail.setMinimumHeight(120)
         layout.addWidget(self.satellite_detail, 1)
 
@@ -121,6 +133,7 @@ class OutlineDock(QDockWidget):
         layout.setSpacing(8)
 
         self.tag_list = QListWidget(page)
+        self.tag_list.setTextElideMode(Qt.TextElideMode.ElideRight)
         layout.addWidget(self.tag_list, 1)
 
         return page
@@ -141,6 +154,7 @@ class OutlineDock(QDockWidget):
         layout.addWidget(self.pdf_hint)
 
         self.pdf_list = QListWidget(page)
+        self.pdf_list.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.pdf_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         layout.addWidget(self.pdf_list, 1)
 
@@ -167,18 +181,23 @@ class OutlineDock(QDockWidget):
         if selection is None:
             self.metadata_label.setText(self._metadata_empty_text())
             self.satellite_list.clear()
+            self._add_disabled_list_item(
+                self.satellite_list,
+                "暂无关联对象\n可通过 [[双向链接]] 或 @文献引用建立关系",
+            )
             self.satellite_detail.clear()
-            self.satellite_detail.setPlaceholderText("点击上方卫星条目查看内容。")
+            self.satellite_detail.setPlaceholderText("点击上方关联条目查看内容。")
             self.delete_annotation_button.setEnabled(False)
             self.tag_list.clear()
+            self._add_disabled_list_item(self.tag_list, "暂无标签\n可在正文中使用 #标签 进行标记")
             return
 
         kind_label = {
-            KnowledgeObjectKind.GALAXY: "星系",
-            KnowledgeObjectKind.PLANET: "行星",
-            KnowledgeObjectKind.STAR_NOTE: "笔记星球",
-            KnowledgeObjectKind.STAR_REFERENCE: "文献星球",
-            KnowledgeObjectKind.SATELLITE: "卫星",
+            KnowledgeObjectKind.GALAXY: "工作区",
+            KnowledgeObjectKind.PLANET: "分类",
+            KnowledgeObjectKind.STAR_NOTE: "笔记",
+            KnowledgeObjectKind.STAR_REFERENCE: "文献",
+            KnowledgeObjectKind.SATELLITE: "关联",
         }.get(selection.kind, selection.kind.value)
         path_text = str(selection.path) if selection.path is not None else "无文件路径"
         description = selection.description or "暂无描述"
@@ -191,12 +210,12 @@ class OutlineDock(QDockWidget):
             f"路径：{path_text}\n\n"
             f"说明\n{description}\n\n"
             f"关联概览\n"
-            f"卫星数量：{satellite_count}\n"
+            f"关联数量：{satellite_count}\n"
             f"标签：{tag_text}\n\n"
             "使用提示\n"
-            "1. 在左侧结构树或全屏星图中选择对象，这里会同步显示它的属性。\n"
-            "2. 笔记星球的卫星通常来自 Markdown 标题、引用、标签、摘录和批注。\n"
-            "3. PDF 文献星球可在 PDF 页签或中央 PDF 阅读器中打开，用于划词摘录和插入引用。"
+            "1. 在左侧资源树或全屏星图中选择对象，这里会同步显示它的属性。\n"
+            "2. 笔记的关联通常来自 Markdown 标题、引用、标签、摘录和批注。\n"
+            "3. PDF 文献可在 PDF 页签或中央 PDF 阅读器中打开，用于划词摘录和插入引用。"
         )
 
         self.satellite_list.clear()
@@ -222,9 +241,12 @@ class OutlineDock(QDockWidget):
             if current_item is not None:
                 self._show_satellite_detail(current_item)
         else:
-            self._add_disabled_list_item(self.satellite_list, "暂无卫星条目")
+            self._add_disabled_list_item(
+                self.satellite_list,
+                "暂无关联对象\n可通过 [[双向链接]] 或 @文献引用建立关系",
+            )
             self.satellite_detail.clear()
-            self.satellite_detail.setPlaceholderText("当前对象暂无卫星内容。")
+            self.satellite_detail.setPlaceholderText("当前对象暂无关联内容。")
             self.delete_annotation_button.setEnabled(False)
 
         self.tag_list.clear()
@@ -232,13 +254,13 @@ class OutlineDock(QDockWidget):
             for tag in selection.tags:
                 self.tag_list.addItem(QListWidgetItem(tag))
         else:
-            self._add_disabled_list_item(self.tag_list, "暂无标签")
+            self._add_disabled_list_item(self.tag_list, "暂无标签\n可在正文中使用 #标签 进行标记")
 
     def _show_satellite_detail(self, item: QListWidgetItem) -> None:
         data = item.data(Qt.ItemDataRole.UserRole)
         if not isinstance(data, dict):
             self.satellite_detail.clear()
-            self.satellite_detail.setPlaceholderText("当前卫星没有可显示的内容。")
+            self.satellite_detail.setPlaceholderText("当前关联没有可显示的内容。")
             self.delete_annotation_button.setEnabled(False)
             return
 
@@ -247,13 +269,13 @@ class OutlineDock(QDockWidget):
         line_text = f"第 {line} 行\n" if line else ""
         preview = str(data.get("preview") or "").strip()
         if not preview:
-            preview = "该卫星暂无内容预览。"
+            preview = "该关联暂无内容预览。"
         self.delete_annotation_button.setEnabled(
             data.get("kind") == "annotation" and bool(annotation_id)
         )
 
         self.satellite_detail.setPlainText(
-            f"{data.get('title', '卫星')}\n"
+            f"{data.get('title', '关联')}\n"
             f"类型：{data.get('kind', 'unknown')}\n"
             f"宿主：{data.get('host', '')}\n"
             f"{line_text}\n"
@@ -297,7 +319,7 @@ class OutlineDock(QDockWidget):
             stack.append(item)
 
         if self.outline_tree.topLevelItemCount() == 0:
-            item = QTreeWidgetItem(["暂无标题"])
+            item = QTreeWidgetItem(["暂无大纲内容\n在正文中使用 #、## 标题后会自动生成大纲"])
             item.setFlags(Qt.ItemFlag.NoItemFlags)
             self.outline_tree.addTopLevelItem(item)
 
@@ -349,7 +371,7 @@ class OutlineDock(QDockWidget):
                     pdfs.append((path, path.name))
 
         if not pdfs:
-            self._add_disabled_pdf_item("暂无 PDF 文献")
+            self._add_disabled_pdf_item("暂无 PDF 附件\n可在文献管理中绑定或导入 PDF")
             return
 
         for pdf_path, title in sorted(pdfs, key=lambda item: item[1].lower()):
@@ -369,16 +391,9 @@ class OutlineDock(QDockWidget):
 
     def _metadata_empty_text(self) -> str:
         return (
-            "选择一个对象后，这里会显示它的元数据和使用提示。\n\n"
-            "可查看的对象包括：\n"
-            "星系：当前工作区。\n"
-            "行星：知识分类，如收集箱、阅读资料、研究主题。\n"
-            "星球：具体笔记或 PDF 文献。\n"
-            "卫星：标题、摘录、批注、引用、链接或标签。\n\n"
-            "建议操作：\n"
-            "1. 在左侧结构树或全屏星图中点击对象。\n"
-            "2. 切到“卫星”页查看该对象下的结构化片段。\n"
-            "3. 切到“PDF”页快速打开工作区文献。"
+            "暂无元数据\n"
+            "文献条目可在导入后补全标题、作者、年份和 DOI\n\n"
+            "选择左侧资源树或星图中的对象后，这里会显示工作区、分类、笔记、文献和关联信息。"
         )
 
     def _emit_heading_selected(self, item: QTreeWidgetItem) -> None:

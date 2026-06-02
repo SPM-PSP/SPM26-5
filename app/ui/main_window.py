@@ -195,10 +195,10 @@ class MainWindow(QMainWindow):
 
         title = QLabel("Agni 星图", page)
         title.setObjectName("cover_title")
-        subtitle = QLabel("从星系进入工作区，用行星组织主题，用星球与卫星定位知识对象。", page)
+        subtitle = QLabel("从工作区进入知识结构，用分类组织笔记、文献、主题和关联。", page)
         subtitle.setObjectName("cover_subtitle")
         hint = QLabel(
-            "操作提示：左键拖拽移动星系或星体，按住左键并滚动鼠标滚轮缩放星图；双击星球进入编辑，右键打开管理菜单。",
+            "操作提示：左键拖拽移动结构或节点，按住左键并滚动鼠标滚轮缩放星图；双击资源进入编辑，右键打开管理菜单。",
             page,
         )
         hint.setObjectName("cover_hint")
@@ -306,7 +306,7 @@ class MainWindow(QMainWindow):
         )
 
     def _build_status_bar(self) -> None:
-        self.workspace_label.setText(f"工作区: {self.workspace_root}")
+        self.workspace_label.setText(f"工作区：{self.workspace_root}")
         self.statusBar().addWidget(self.workspace_label, 1)
         self.statusBar().addPermanentWidget(self.status_label)
 
@@ -527,7 +527,7 @@ class MainWindow(QMainWindow):
                         title=star_title,
                         color=self._planet_color(planet_title),
                         path=star_path,
-                        description="文献或附件星球" if object_kind == "reference" else "Markdown 笔记星球",
+                        description="文献或附件" if object_kind == "reference" else "Markdown 笔记",
                         planet=planet_title,
                         tags=tuple(str(tag) for tag in tuple(star_payload.get("tags") or ())),
                         satellites=satellites,
@@ -1080,18 +1080,18 @@ class MainWindow(QMainWindow):
         if not self._activate_workspace_from_graph_payload(payload):
             return
 
-        title = self._prompt_text("新增行星", "行星名称：", "新行星")
+        title = self._prompt_text("新增分类", "分类名称：", "新分类")
         if not title:
             return
 
         if not self.note_dock.add_planet(title):
-            self._show_message(QMessageBox.Icon.Information, "行星已存在", f"“{title}”已经在当前星系中。")
+            self._show_message(QMessageBox.Icon.Information, "分类已存在", f"“{title}”已经在当前工作区中。")
             return
 
         planet_key = self.note_dock.planet_assignment_key(title)
         self._create_graph_star_note(title, planet_key)
         self._refresh_cover_after_graph_change(system_index)
-        self.status_label.setText(f"已新增行星并创建同名星球: {title}")
+        self.status_label.setText(f"已新增分类并创建同名资源: {title}")
 
     def delete_planet_from_graph(self, payload: object) -> None:
         system_index = self._system_index_from_graph_payload(payload)
@@ -1100,19 +1100,19 @@ class MainWindow(QMainWindow):
 
         candidates = self.note_dock.visible_planets_for_actions()
         if not candidates:
-            self._show_message(QMessageBox.Icon.Information, "暂无可删除行星", "当前星系中没有可删除的行星。")
+            self._show_message(QMessageBox.Icon.Information, "暂无可删除分类", "当前工作区中没有可删除的分类。")
             return
 
-        selected = self._choose_keyed_item("删除行星", "选择要删除的行星：", candidates)
+        selected = self._choose_keyed_item("删除分类", "选择要删除的分类：", candidates)
         if selected is None:
             return
         planet_key, planet_title = selected
 
         stars = self.note_dock.stars_for_planet(planet_key)
         if not self._ask_confirmation(
-            "确认删除行星",
-            f"将删除行星“{planet_title}”。\n\n其下 {len(stars)} 个星球会先归入“未归类”，高轨行星会自动降轨补齐。",
-            confirm_text="删除行星",
+            "确认删除分类",
+            f"将删除分类“{planet_title}”。\n\n其下 {len(stars)} 个资源会先归入“未归类”，后续分类会自动补齐。",
+            confirm_text="删除分类",
         ):
             return
 
@@ -1120,11 +1120,11 @@ class MainWindow(QMainWindow):
             self._assign_graph_node_to_planet(star, "Unassigned")
 
         if not self.note_dock.delete_planet(planet_key):
-            self._show_message(QMessageBox.Icon.Warning, "删除失败", "该行星暂不能删除。")
+            self._show_message(QMessageBox.Icon.Warning, "删除失败", "该分类暂不能删除。")
             return
 
         self._refresh_cover_after_graph_change(system_index)
-        self.status_label.setText(f"已删除行星: {planet_title}")
+        self.status_label.setText(f"已删除分类: {planet_title}")
 
     def add_star_from_graph(self, payload: object) -> None:
         system_index = self._system_index_from_graph_payload(payload)
@@ -1133,13 +1133,13 @@ class MainWindow(QMainWindow):
 
         planet_title = self._planet_from_graph_payload(payload)
         planet_key = self.note_dock.planet_assignment_key(planet_title)
-        title = self._prompt_text("新增星球", "星球名称：", "新星球")
+        title = self._prompt_text("新增资源", "资源名称：", "新资源")
         if not title:
             return
 
         self._create_graph_star_note(title, planet_key)
         self._refresh_cover_after_graph_change(system_index)
-        self.status_label.setText(f"已在“{self.note_dock.planet_display_title(planet_key)}”行星新增星球: {title}")
+        self.status_label.setText(f"已在“{self.note_dock.planet_display_title(planet_key)}”分类新增资源: {title}")
 
     def delete_star_from_graph(self, payload: object) -> None:
         system_index = self._system_index_from_graph_payload(payload)
@@ -1158,11 +1158,11 @@ class MainWindow(QMainWindow):
                 if star.kind == KnowledgeObjectKind.STAR_NOTE and star.path is not None
             ]
             if not candidates:
-                self._show_message(QMessageBox.Icon.Information, "暂无可删除星球", "该轨道下没有可从星图删除的 Markdown 星球。")
+                self._show_message(QMessageBox.Icon.Information, "暂无可删除资源", "该分类下没有可从星图删除的 Markdown 资源。")
                 return
             selected = self._choose_keyed_item(
-                "删除星球",
-                "选择要删除的星球：",
+                "删除资源",
+                "选择要删除的资源：",
                 [(str(star.path), star.title) for star in candidates if star.path is not None],
             )
             if selected is None:
@@ -1188,7 +1188,7 @@ class MainWindow(QMainWindow):
             candidate.write_text(f"# {title}\n\n", encoding="utf-8")
             set_title_for_path(self.workspace_root, candidate, title)
         except OSError as error:
-            self._show_message(QMessageBox.Icon.Critical, "创建星球失败", str(error))
+            self._show_message(QMessageBox.Icon.Critical, "创建资源失败", str(error))
             return None
 
         target = {
@@ -1486,7 +1486,7 @@ class MainWindow(QMainWindow):
             self.app_context.db_path = Path(workspace_context.database_path)
 
         self.setWindowTitle(f"Agni - {self.workspace_root.name}")
-        self.workspace_label.setText(f"工作区: {self.workspace_root}")
+        self.workspace_label.setText(f"工作区：{self.workspace_root}")
         self._reset_tabs_for_workspace()
         self._load_workspace()
         self._open_initial_note()
@@ -1530,9 +1530,9 @@ class MainWindow(QMainWindow):
             CommandItem("打开 PDF", self.open_pdf_from_dialog, "从 references 或 attachments 打开 PDF 阅读器"),
             CommandItem("PDF 摘录到笔记", self.insert_pdf_excerpt, "把 PDF 当前选区插入 Markdown 笔记"),
             CommandItem("插入 PDF 引用", self.insert_pdf_citation, "把 PDF citation key 插入当前笔记"),
-            CommandItem("打开知识模型", self.focus_knowledge_model, "聚焦星系-行星-星球-卫星模型树"),
+            CommandItem("打开知识结构图", self.focus_knowledge_model, "聚焦工作区、分类、资源和关联结构"),
             CommandItem("聚焦搜索", self.focus_search_panel, "跳转到右侧搜索与反链面板"),
-            CommandItem("聚焦文档导航", self.focus_outline_panel, "跳转到右侧大纲、PDF、元数据与卫星面板"),
+            CommandItem("聚焦文档导航", self.focus_outline_panel, "跳转到右侧大纲、PDF、元数据与关联面板"),
             CommandItem("刷新工作区", self.refresh_workspace, "重新扫描工作区资源"),
         ]
         dialog = CommandPaletteDialog(commands, self)
@@ -1540,7 +1540,7 @@ class MainWindow(QMainWindow):
 
     def focus_knowledge_model(self) -> None:
         self.show_star_map_cover(from_workbench=True)
-        self.status_label.setText("已聚焦知识模型")
+        self.status_label.setText("已聚焦知识结构图")
 
     def focus_search_panel(self) -> None:
         self.show_workbench()
@@ -1656,7 +1656,7 @@ class MainWindow(QMainWindow):
         self.note_dock.tabs.setCurrentWidget(self.note_dock.model_page)
         planet_title = self.note_dock.planet_display_title(planet)
         self.status_label.setText(
-            f"已归入 {planet_title} 行星: {target['object_kind']}:{target['object_key']}"
+            f"已归入 {planet_title} 分类: {target['object_kind']}:{target['object_key']}"
         )
 
     def open_pdf_from_dialog(self) -> None:
@@ -1763,7 +1763,7 @@ class MainWindow(QMainWindow):
                         kind=KnowledgeObjectKind.STAR_REFERENCE,
                         title=path.name,
                         path=path,
-                        description="文献或附件星球。可在 PDF 阅读器中翻页、划词摘录、插入引用并保存批注。",
+                        description="文献或附件。可在 PDF 阅读器中翻页、划词摘录、插入引用并保存批注。",
                         tags=("文献", path.suffix.lower().lstrip(".")),
                     )
                 )
@@ -1784,7 +1784,7 @@ class MainWindow(QMainWindow):
                     kind=KnowledgeObjectKind.STAR_REFERENCE,
                     title=path.name,
                     path=path,
-                    description="文献或附件星球。可在 PDF 阅读器中翻页、划词摘录、插入引用并保存批注。",
+                    description="文献或附件。可在 PDF 阅读器中翻页、划词摘录、插入引用并保存批注。",
                     tags=("文献", path.suffix.lower().lstrip(".")),
             )
         )
@@ -1892,7 +1892,7 @@ class MainWindow(QMainWindow):
             if not silent:
                 self._show_message(
                     QMessageBox.Icon.Warning,
-                    "文献星球创建失败",
+                    "文献条目创建失败",
                     str(create_result.get("message") or "无法为该 PDF 创建文献记录。"),
                 )
             return None
@@ -1912,7 +1912,7 @@ class MainWindow(QMainWindow):
             return None
 
         if not silent:
-            self.status_label.setText(f"已登记 PDF 文献星球: {resolved_pdf.stem}")
+            self.status_label.setText(f"已登记 PDF 文献: {resolved_pdf.stem}")
         return reference_id
 
     def _bind_reference_pdf_if_needed(
@@ -1955,7 +1955,7 @@ class MainWindow(QMainWindow):
             if reference_id and before is None:
                 created_count += 1
         if created_count:
-            self.status_label.setText(f"已同步 {created_count} 个 PDF 文献星球")
+            self.status_label.setText(f"已同步 {created_count} 个 PDF 文献")
 
     def _iter_workspace_pdf_paths(self) -> tuple[Path, ...]:
         pdfs: list[Path] = []
@@ -2065,7 +2065,7 @@ class MainWindow(QMainWindow):
             return
         if not self._ask_confirmation(
             "删除 PDF 批注",
-            "确定删除这条 PDF 批注吗？删除后对应卫星也会从文档导航和星图中移除。",
+            "确定删除这条 PDF 批注吗？删除后对应关联也会从文档导航和星图中移除。",
             confirm_text="删除批注",
         ):
             return
@@ -2128,7 +2128,7 @@ class MainWindow(QMainWindow):
             title=path.stem,
             path=path,
             description=(
-                "文献或附件星球。PDF 批注会作为卫星显示在这里；"
+                "文献或附件。PDF 批注会作为关联显示在这里；"
                 "可在 PDF 阅读器中划词、摘录、批注或插入引用。"
             ),
             tags=("文献", path.suffix.lower().lstrip(".")),
@@ -2179,7 +2179,7 @@ class MainWindow(QMainWindow):
         self._show_message(
             QMessageBox.Icon.Information,
             "关于 Agni",
-            "Agni 当前工作台已接入笔记、搜索、反向链接、文献、PDF 与知识模型后端接口。界面继续保留三栏布局、Markdown 编辑、星图、文档导航和 PDF 阅读等现有交互。",
+            "Agni 当前工作台已接入笔记、搜索、反向链接、文献、PDF 与知识结构后端接口。界面继续保留三栏布局、Markdown 编辑、星图、文档导航和 PDF 阅读等现有交互。",
         )
 
     def _show_message(self, icon: QMessageBox.Icon, title: str, text: str) -> None:
@@ -2273,7 +2273,7 @@ class MainWindow(QMainWindow):
             kind=KnowledgeObjectKind.STAR_NOTE,
             title=title,
             path=note_path,
-            description="Markdown 笔记星球：标题、摘录、批注、引用、链接和标签会作为卫星展示。",
+            description="Markdown 笔记：标题、摘录、批注、引用、链接和标签会作为关联展示。",
             tags=("笔记", "Markdown"),
             satellites=satellites,
         )
@@ -2305,21 +2305,21 @@ class MainWindow(QMainWindow):
 
     def _knowledge_dashboard_text(self, selection: KnowledgeSelection) -> str:
         model_hint = (
-            "星系：当前工作区\n"
-            "行星：主题/阶段/场景分组\n"
-            "星球：笔记、文献或 PDF 等知识对象\n"
-            "卫星：标题、摘录、批注、反链、标签等附属信息"
+            "工作区：当前知识库\n"
+            "分类：收集箱、阅读资料、研究主题等资源分组\n"
+            "资源：笔记、文献或 PDF 等知识对象\n"
+            "关联：标题、摘录、批注、反链、标签等附属信息"
         )
         path_text = str(selection.path) if selection.path is not None else "无文件路径"
         satellites = "\n".join(f"- {item.title}" for item in selection.satellites[:8])
         if not satellites:
-            satellites = "- 暂无卫星条目"
+            satellites = "- 暂无关联条目"
         return (
             f"{selection.title}\n\n"
-            f"{selection.description or '知识模型展示入口'}\n\n"
+            f"{selection.description or '知识结构展示入口'}\n\n"
             f"{model_hint}\n\n"
             f"路径：{path_text}\n\n"
-            f"卫星预览：\n{satellites}\n\n"
+            f"关联预览：\n{satellites}\n\n"
             "这是 UI 展示层入口，不在此处写入数据库关系。"
         )
 

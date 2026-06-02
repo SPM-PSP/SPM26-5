@@ -204,11 +204,15 @@ class NoteEditorWidget(QWidget):
         self.title_edit.setPlaceholderText("请输入笔记标题")
 
         self.status_label = QLabel("idle", self)
+        self.status_label.setObjectName("editor_status_label")
+        self.status_label.setTextFormat(Qt.TextFormat.RichText)
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.status_label.setMinimumWidth(82)
 
         header_layout.addWidget(title_hint_label)
         header_layout.addWidget(self.title_edit, 1)
         header_layout.addWidget(self.status_label)
+        self._set_status_indicator(self._document.session_status)
 
         self.preview = LinePreviewBrowser(self)
         self.preview.setOpenLinks(False)
@@ -269,6 +273,31 @@ class NoteEditorWidget(QWidget):
         self.save_action.triggered.connect(self.request_save)
         self.addAction(self.save_action)
 
+    def _set_status_indicator(self, status: str) -> None:
+        color_by_status = {
+            "idle": "#22C55E",
+            "editing": "#F59E0B",
+            "saved": "#22C55E",
+            "save_failed": "#EF4444",
+            "external_modified": "#F59E0B",
+        }
+        label_by_status = {
+            "idle": "idle",
+            "editing": "editing",
+            "saved": "saved",
+            "save_failed": "error",
+            "external_modified": "warning",
+        }
+        dot_color = color_by_status.get(status, "#9CA3AF")
+        label = label_by_status.get(status, status or "idle")
+        self.status_label.setText(
+            "<span style='white-space: nowrap;'>"
+            f"<span style='color:{dot_color}; font-size:16px;'>●</span>"
+            "&nbsp;"
+            f"<span style='color:#374151; font-size:13px;'>{html.escape(label)}</span>"
+            "</span>"
+        )
+
     def showEvent(self, event) -> None:
         super().showEvent(event)
         self._apply_editor_fonts()
@@ -303,12 +332,22 @@ class NoteEditorWidget(QWidget):
 
     def _render_document_html(self, lines: list[str], editing_line_index: int) -> str:
         body_parts = []
+        is_empty_document = not any(line.strip() for line in lines)
         for i, line in enumerate(lines):
             if i == editing_line_index:
                 placeholder = self._render_editing_line_placeholder(line)
                 body_parts.append(f'<div class="agni-line editing-line">{placeholder}</div>')
             else:
                 body_parts.append(self._render_line_to_html(line))
+        if is_empty_document:
+            body_parts.append(
+                """
+                <div class="empty-state">
+                    <div class="empty-title">开始记录你的阅读笔记...</div>
+                    <div class="empty-body">支持 Markdown、[[双向链接]]、@文献引用 和 #标签</div>
+                </div>
+                """
+            )
 
         return f"""
         <html>
@@ -340,6 +379,24 @@ class NoteEditorWidget(QWidget):
             }}
             .editing-line-placeholder {{
                 visibility: hidden;
+            }}
+            .empty-state {{
+                margin-top: 10px;
+                padding: 18px 20px;
+                border: 1px dashed #D9E1EC;
+                border-radius: 8px;
+                color: #6B7280;
+                background: #F8FAFC;
+            }}
+            .empty-title {{
+                color: #374151;
+                font-size: 14pt;
+                font-weight: 600;
+                margin-bottom: 8px;
+            }}
+            .empty-body {{
+                color: #6B7280;
+                font-size: 10.5pt;
             }}
             h1, h2, h3, h4, h5, h6 {{
                 margin: 8px 0 6px 0;
@@ -555,7 +612,7 @@ class NoteEditorWidget(QWidget):
         full_text = self._get_text_from_lines()
 
         self._document.set_text(full_text, mark_dirty=True)
-        self.status_label.setText(self._document.session_status)
+        self._set_status_indicator(self._document.session_status)
 
         self.content_changed.emit(full_text)
         self.document_changed.emit(self._document)
@@ -635,7 +692,7 @@ class NoteEditorWidget(QWidget):
             return
 
         self._document.set_title(title)
-        self.status_label.setText(self._document.session_status)
+        self._set_status_indicator(self._document.session_status)
 
         self.title_changed.emit(title)
         self.document_changed.emit(self._document)
@@ -667,7 +724,7 @@ class NoteEditorWidget(QWidget):
         self._is_loading = True
         try:
             self.title_edit.setText(self._document.title or "")
-            self.status_label.setText(self._document.session_status)
+            self._set_status_indicator(self._document.session_status)
 
             self._set_lines_from_text(self._document.get_text())
 
@@ -872,19 +929,19 @@ class NoteEditorWidget(QWidget):
         version: int | None = None,
     ) -> None:
         self._document.restore_after_save(file_mtime=file_mtime, version=version)
-        self.status_label.setText(self._document.session_status)
+        self._set_status_indicator(self._document.session_status)
         self.status_changed.emit(self._document.session_status)
         self.document_changed.emit(self._document)
 
     def mark_save_failed(self) -> None:
         self._document.mark_save_failed()
-        self.status_label.setText(self._document.session_status)
+        self._set_status_indicator(self._document.session_status)
         self.status_changed.emit(self._document.session_status)
         self.document_changed.emit(self._document)
 
     def mark_external_modified(self) -> None:
         self._document.mark_external_modified()
-        self.status_label.setText(self._document.session_status)
+        self._set_status_indicator(self._document.session_status)
         self.status_changed.emit(self._document.session_status)
         self.document_changed.emit(self._document)
 
