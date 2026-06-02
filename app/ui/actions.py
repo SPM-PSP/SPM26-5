@@ -182,8 +182,12 @@ LIGHT_THEME = {
     "panel_bg": "#FFFFFF",
     "panel_subtle": "#F8FAFC",
     "canvas_bg": "#FBFCFE",
+    "hover_bg": "#F3F6FA",
+    "active_bg": "#EAF2FF",
+    "selected_bg": "#E8F1FF",
     "border_light": "#E6EAF0",
     "border_normal": "#D9E1EC",
+    "border_strong": "#CBD5E1",
     "border_focus": "#2563EB",
     "text_primary": "#111827",
     "text_secondary": "#374151",
@@ -192,9 +196,14 @@ LIGHT_THEME = {
     "primary": "#2563EB",
     "primary_hover": "#1D4ED8",
     "primary_soft": "#EFF6FF",
+    "info": "#0EA5E9",
+    "success": "#22C55E",
+    "warning": "#F59E0B",
     "danger": "#EF4444",
     "danger_text": "#DC2626",
     "danger_soft": "#FFF1F2",
+    "purple": "#8B5CF6",
+    "teal": "#14B8A6",
 }
 
 
@@ -261,8 +270,8 @@ def build_app_stylesheet() -> str:
     }}
 
     QPushButton#cover_secondary_button:hover {{
-        background: #F3F6FA;
-        border-color: #C7D2E0;
+        background: {t["hover_bg"]};
+        border-color: {t["border_strong"]};
     }}
 
     QPushButton#cover_danger_button {{
@@ -333,9 +342,27 @@ def build_app_stylesheet() -> str:
     }}
 
     QToolButton:hover {{
-        background: #F3F6FA;
+        background: {t["hover_bg"]};
         border-color: {t["border_focus"]};
         color: {t["text_primary"]};
+    }}
+
+    QToolButton:pressed,
+    QPushButton:pressed {{
+        background: {t["active_bg"]};
+    }}
+
+    QToolButton:disabled,
+    QPushButton:disabled {{
+        background: {t["panel_subtle"]};
+        border-color: {t["border_light"]};
+        color: {t["text_disabled"]};
+    }}
+
+    QToolBar::separator {{
+        background: {t["border_light"]};
+        width: 1px;
+        margin: 7px 6px;
     }}
 
     QStatusBar {{
@@ -406,6 +433,7 @@ def build_app_stylesheet() -> str:
     QTabBar::tab {{
         background: {t["panel_subtle"]};
         color: {t["text_muted"]};
+        min-height: 36px;
         padding: 7px 30px 7px 12px;
         border: 1px solid {t["border_light"]};
         border-bottom: 0;
@@ -464,13 +492,13 @@ def build_app_stylesheet() -> str:
     }}
 
     QSpinBox#pdf_page_spin {{
-        min-height: 30px;
+        min-height: 32px;
         padding: 4px 6px;
         font-weight: 600;
     }}
 
     QComboBox {{
-        min-height: 28px;
+        min-height: 32px;
         padding: 4px 8px;
     }}
 
@@ -509,33 +537,34 @@ def build_app_stylesheet() -> str:
 
     QListWidget::item,
     QTreeWidget::item {{
-        padding: 7px 8px;
+        min-height: 30px;
+        padding: 6px 8px;
         border-radius: 5px;
         color: {t["text_secondary"]};
     }}
 
     QListWidget::item:selected,
     QTreeWidget::item:selected {{
-        background: #DBEAFE;
+        background: {t["selected_bg"]};
         color: {t["primary"]};
     }}
 
     QListWidget::item:hover,
     QTreeWidget::item:hover {{
-        background: {t["panel_subtle"]};
+        background: {t["hover_bg"]};
     }}
 
     QPushButton {{
         background: {t["window_bg"]};
         border: 1px solid {t["border_normal"]};
         color: {t["text_primary"]};
-        min-height: 30px;
-        padding: 6px 11px;
+        min-height: 32px;
+        padding: 6px 14px;
         border-radius: 7px;
     }}
 
     QPushButton:hover {{
-        background: #F3F6FA;
+        background: {t["hover_bg"]};
         border-color: {t["border_focus"]};
     }}
 
@@ -589,5 +618,40 @@ def build_app_stylesheet() -> str:
 
     QSplitter::handle {{
         background: {t["border_light"]};
+    }}
+
+    QScrollBar:vertical {{
+        background: transparent;
+        width: 8px;
+        margin: 2px;
+    }}
+
+    QScrollBar:horizontal {{
+        background: transparent;
+        height: 8px;
+        margin: 2px;
+    }}
+
+    QScrollBar::handle:vertical,
+    QScrollBar::handle:horizontal {{
+        background: {t["border_strong"]};
+        border-radius: 4px;
+        min-height: 28px;
+        min-width: 28px;
+    }}
+
+    QScrollBar::handle:vertical:hover,
+    QScrollBar::handle:horizontal:hover {{
+        background: #94A3B8;
+    }}
+
+    QScrollBar::add-line,
+    QScrollBar::sub-line,
+    QScrollBar::add-page,
+    QScrollBar::sub-page {{
+        background: transparent;
+        border: 0;
+        width: 0;
+        height: 0;
     }}
     """

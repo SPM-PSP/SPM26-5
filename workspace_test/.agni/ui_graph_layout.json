@@ -9,8 +9,8 @@
       "y": 157.32
     },
     "planet:收集箱::收集箱": {
-      "x": -456.27,
-      "y": 121.63
+      "x": -482.27,
+      "y": 94.33
     },
     "planet:新行星1::新行星1": {
       "x": 447.56,
@@ -29,12 +29,12 @@
       "y": 4.54
     },
     "planet:研究主题::研究主题": {
-      "x": -374.04,
-      "y": 80.31
+      "x": -408.28,
+      "y": 35.55
     },
     "planet:阅读资料::阅读资料": {
-      "x": -430.93,
-      "y": 78.14
+      "x": -484.77,
+      "y": 42.95
     },
     "star_note:4:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_test\\notes\\4.md:4:heading:1:4": {
       "x": 114.52,
@@ -57,12 +57,12 @@
       "y": 97.29
     },
     "star_note:收集箱:D:\\Vibe_Coding\\Agni\\SPM26-5\\workspace_test\\notes\\Note.md:Note:heading:1:Note": {
-      "x": -453.61,
-      "y": 126.96
+      "x": -452.33,
+      "y": 130.0
     },
     "star_note:收集箱:D:\\Vibe_Coding\\Agni\\SPM26-5\\workspace_test\\notes\\新行星.md:新行星:heading:1:新行星": {
-      "x": -480.8,
-      "y": 219.38
+      "x": -502.76,
+      "y": 229.01
     },
     "star_note:新行星1:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_test\\notes\\新行星1.md:新行星1:heading:1:新行星1": {
       "x": 98.33,
@@ -105,28 +105,28 @@
       "y": -54.55
     },
     "star_note:未归类:D:\\Vibe_Coding\\Agni\\SPM26-5\\workspace_test\\notes\\新行星3.md:新行星3:heading:1:新行星3": {
-      "x": -310.1,
-      "y": 136.71
+      "x": -309.2,
+      "y": 150.65
     },
     "star_note:未归类:D:\\Vibe_Coding\\Agni\\SPM26-5\\workspace_test\\notes\\新行星4.md:新行星4:heading:1:新行星4": {
-      "x": -489.58,
-      "y": 366.96
+      "x": -506.47,
+      "y": 368.81
     },
     "star_note:研究主题:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_test\\notes\\研究1.md:研究1:heading:1:研究1": {
       "x": 313.95,
       "y": -136.06
     },
     "star_note:研究主题:D:\\Vibe_Coding\\Agni\\SPM26-5\\workspace_test\\notes\\研究1.md:研究1:heading:1:研究1": {
-      "x": -380.72,
-      "y": 68.72
+      "x": -456.52,
+      "y": 4.4
     },
     "star_note:阅读资料:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_test\\notes\\新行星1.md:新行星1:heading:1:新行星1": {
       "x": 56.33,
       "y": -21.83
     },
     "star_note:阅读资料:D:\\Vibe_Coding\\Agni\\SPM26-5\\workspace_test\\notes\\新行星1.md:新行星1:heading:1:新行星1": {
-      "x": -454.82,
-      "y": 57.28
+      "x": -434.77,
+      "y": 73.98
     }
   },
   "star-detail:star_note:收集箱:D:\\SPM26_5\\Agni\\SPM26-5\\workspace_test\\notes\\Inbox.md:Inbox:heading:1:Inbox": {

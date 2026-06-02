@@ -43,7 +43,7 @@ EDITOR_TEXT_COLOR = "#111827"
 EDITOR_CONTENT_PADDING_X = 24
 EDITOR_CONTENT_PADDING_Y = 18
 EDITOR_LINE_PADDING_Y = 3
-EDITOR_LINE_HEIGHT = 1.32
+EDITOR_LINE_HEIGHT = 1.6
 EDITOR_MIN_LINE_HEIGHT = 28
 
 
@@ -183,7 +183,8 @@ class NoteEditorWidget(QWidget):
                 color: #111827;
                 border: 1px solid #D9E1EC;
                 border-radius: 8px;
-                padding: 6px 10px;
+                min-height: 32px;
+                padding: 4px 10px;
             }
             QLineEdit:focus {
                 border: 1px solid #2563EB;
