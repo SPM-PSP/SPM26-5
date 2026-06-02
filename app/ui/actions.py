@@ -203,6 +203,12 @@ def build_app_stylesheet() -> str:
         font-size: 14px;
     }
 
+    QLabel#cover_hint {
+        color: #6f92aa;
+        font-size: 12px;
+        padding: 2px 0 0 1px;
+    }
+
     QPushButton#cover_primary_button,
     QPushButton#cover_secondary_button {
         min-height: 28px;

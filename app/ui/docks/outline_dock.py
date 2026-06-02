@@ -32,6 +32,7 @@ class OutlineDock(QDockWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__("文档导航", parent)
         self.workspace_root: Path | None = None
+        self.reference_controller = None
 
         self.setObjectName("outline_dock")
         self.setAllowedAreas(
@@ -158,6 +159,9 @@ class OutlineDock(QDockWidget):
     def set_workspace(self, workspace_root: str | Path) -> None:
         self.workspace_root = Path(workspace_root)
         self.refresh_pdfs()
+
+    def set_reference_controller(self, reference_controller: object | None) -> None:
+        self.reference_controller = reference_controller
 
     def set_object_context(self, selection: KnowledgeSelection | None) -> None:
         if selection is None:
@@ -305,18 +309,51 @@ class OutlineDock(QDockWidget):
             self._add_disabled_pdf_item("尚未打开工作区")
             return
 
-        pdfs: list[Path] = []
+        pdfs: list[tuple[Path, str]] = []
+        seen: set[Path] = set()
+        if self.reference_controller is not None:
+            list_references = getattr(self.reference_controller, "list_references", None)
+            if list_references is not None:
+                result = list_references(self.workspace_root)
+                if isinstance(result, dict) and result.get("success"):
+                    data = result.get("data", {})
+                    references = data.get("references", ()) if isinstance(data, dict) else ()
+                    for reference in references:
+                        if not isinstance(reference, dict):
+                            continue
+                        pdf_value = reference.get("pdf_path") or reference.get("source_path")
+                        if not pdf_value:
+                            continue
+                        pdf_path = Path(str(pdf_value))
+                        if not pdf_path.is_absolute():
+                            pdf_path = self.workspace_root / pdf_path
+                        if pdf_path.suffix.lower() != ".pdf" or not pdf_path.exists():
+                            continue
+                        resolved = pdf_path.resolve()
+                        if resolved in seen:
+                            continue
+                        seen.add(resolved)
+                        title = str(reference.get("title") or pdf_path.name)
+                        pdfs.append((pdf_path, title))
+
         for folder_name in ("references", "attachments"):
             folder = self.workspace_root / folder_name
             if folder.exists():
-                pdfs.extend(path for path in folder.rglob("*.pdf") if path.is_file())
+                for path in folder.rglob("*.pdf"):
+                    if not path.is_file():
+                        continue
+                    resolved = path.resolve()
+                    if resolved in seen:
+                        continue
+                    seen.add(resolved)
+                    pdfs.append((path, path.name))
 
         if not pdfs:
             self._add_disabled_pdf_item("暂无 PDF 文献")
             return
 
-        for pdf_path in sorted(pdfs, key=lambda item: item.name.lower()):
-            item = QListWidgetItem(pdf_path.name)
+        for pdf_path, title in sorted(pdfs, key=lambda item: item[1].lower()):
+            item = QListWidgetItem(title)
             item.setToolTip(str(pdf_path))
             item.setData(Qt.ItemDataRole.UserRole, str(pdf_path))
             self.pdf_list.addItem(item)

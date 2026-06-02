@@ -709,15 +709,13 @@ class KnowledgeGraphWidget(QWidget):
                 marker_node,
                 marker_position,
             )
-            marker_drag_radius = math.hypot(marker_position.x() - center.x(), marker_position.y() - center.y())
-            if marker_drag_radius <= 0.01:
-                marker_drag_radius = orbit_radius
+            marker_position = self._project_position_to_orbit(marker_position, center, orbit_radius)
             marker_item = self._add_orbit_label(
                 marker_node,
                 marker_position,
                 system_index=system_index,
                 orbit_center=center,
-                orbit_radius=marker_drag_radius,
+                orbit_radius=orbit_radius,
             )
             system_items.append(marker_item)
 
@@ -734,9 +732,7 @@ class KnowledgeGraphWidget(QWidget):
                     center.y() + math.sin(angle) * orbit_radius,
                 )
                 position = self._saved_or_default_position(system_index, "orbit", node, position)
-                node_drag_radius = math.hypot(position.x() - center.x(), position.y() - center.y())
-                if node_drag_radius <= 0.01:
-                    node_drag_radius = orbit_radius
+                position = self._project_position_to_orbit(position, center, orbit_radius)
                 item = self._add_circle(
                     node,
                     position,
@@ -744,7 +740,7 @@ class KnowledgeGraphWidget(QWidget):
                     system_index=system_index,
                     drag_mode="orbit",
                     orbit_center=center,
-                    orbit_radius=node_drag_radius,
+                    orbit_radius=orbit_radius,
                 )
                 system_items.append(item)
                 if node.kind in (KnowledgeObjectKind.STAR_NOTE, KnowledgeObjectKind.STAR_REFERENCE):
@@ -1178,6 +1174,21 @@ class KnowledgeGraphWidget(QWidget):
         if saved is None:
             return default
         return QPointF(saved[0], saved[1])
+
+    def _project_position_to_orbit(
+        self,
+        position: QPointF,
+        center: QPointF,
+        orbit_radius: float,
+    ) -> QPointF:
+        vector = position - center
+        distance = math.hypot(vector.x(), vector.y())
+        if distance <= 0.01:
+            return QPointF(center.x() + orbit_radius, center.y())
+        return QPointF(
+            center.x() + vector.x() / distance * orbit_radius,
+            center.y() + vector.y() / distance * orbit_radius,
+        )
 
     def _save_item_position(self, node: KnowledgeGraphNode, item) -> None:
         system_index = getattr(item, "system_index", None)

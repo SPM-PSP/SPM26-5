@@ -3,7 +3,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, Qt, QUrl
+from PySide6.QtCore import QEvent, QSignalBlocker, Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -26,12 +26,20 @@ from PySide6.QtWidgets import (
 )
 
 from app.bootstrap.config import AppConfig
+from app.controllers.citation_controller import CitationController
 from app.controllers.knowledge_controller import KnowledgeController
+from app.controllers.note_controller import NoteController
 from app.controllers.pdf_controller import PdfController
+from app.controllers.reference_controller import ReferenceController
+from app.controllers.search_controller import SearchController
 from app.controllers.workspace_controller import WorkspaceController
+from app.services.citation_service import CitationService
 from app.services.knowledge_model_service import KnowledgeModelService
+from app.services.link_service import LinkService
+from app.services.note_service import NoteService
 from app.services.pdf_service import PdfService
 from app.services.reference_service import ReferenceService
+from app.services.search_service import SearchService
 from app.services.workspace_service import WorkspaceService
 from app.ui.actions import AgniActionSet, build_app_stylesheet
 from app.ui.dialogs.command_palette_dialog import CommandPaletteDialog
@@ -64,14 +72,61 @@ class MainWindow(QMainWindow):
         self.workspace_root = Path(app_context.workspace_root)
         self.notes_dir = self.workspace_root / "notes"
         self.current_note_path: Path | None = None
-        self.workspace_service = WorkspaceService(AppConfig())
-        self.workspace_controller = WorkspaceController(self.workspace_service)
-        self.reference_service = ReferenceService(self.workspace_service)
-        self.knowledge_controller = KnowledgeController(
-            KnowledgeModelService(self.workspace_service)
+        self.workspace_service = (
+            getattr(app_context, "workspace_service", None)
+            or getattr(getattr(app_context, "note_service", None), "workspace_service", None)
+            or getattr(getattr(app_context, "reference_service", None), "workspace_service", None)
+            or WorkspaceService(AppConfig())
         )
-        self.pdf_controller = PdfController(
-            PdfService(self.workspace_service, self.reference_service)
+        self.workspace_controller = (
+            getattr(app_context, "workspace_controller", None)
+            or WorkspaceController(self.workspace_service)
+        )
+        self.note_service = getattr(app_context, "note_service", None) or NoteService(
+            self.workspace_service
+        )
+        self.reference_service = getattr(app_context, "reference_service", None) or ReferenceService(
+            self.workspace_service
+        )
+        self.link_service = getattr(app_context, "link_service", None) or LinkService(
+            self.workspace_service
+        )
+        self.search_service = getattr(app_context, "search_service", None) or SearchService(
+            self.workspace_service
+        )
+        self.knowledge_model_service = (
+            getattr(app_context, "knowledge_model_service", None)
+            or KnowledgeModelService(self.workspace_service)
+        )
+        self.pdf_service = getattr(app_context, "pdf_service", None) or PdfService(
+            self.workspace_service,
+            self.reference_service,
+        )
+        self.note_controller = getattr(app_context, "note_controller", None) or NoteController(
+            self.note_service
+        )
+        self.reference_controller = (
+            getattr(app_context, "reference_controller", None)
+            or ReferenceController(self.reference_service)
+        )
+        self.search_controller = getattr(app_context, "search_controller", None) or SearchController(
+            self.search_service,
+            self.link_service,
+        )
+        self.knowledge_controller = (
+            getattr(app_context, "knowledge_controller", None)
+            or KnowledgeController(self.knowledge_model_service)
+        )
+        self.pdf_controller = getattr(app_context, "pdf_controller", None) or PdfController(
+            self.pdf_service
+        )
+        self.citation_controller = getattr(app_context, "citation_controller", None) or CitationController(
+            CitationService(
+                self.workspace_service,
+                self.note_service,
+                self.pdf_service,
+                self.reference_service,
+            )
         )
 
         self.setObjectName("agni_main_window")
@@ -101,6 +156,7 @@ class MainWindow(QMainWindow):
         self.outline_dock = OutlineDock(self)
         self.main_toolbar: QToolBar | None = None
         self._pre_pdf_dock_visibility: tuple[bool, bool, bool] | None = None
+        self._active_right_sidebar = "outline"
         self.workspace_label = QLabel(self)
         self.status_label = QLabel("就绪", self)
 
@@ -138,6 +194,12 @@ class MainWindow(QMainWindow):
         title.setObjectName("cover_title")
         subtitle = QLabel("从星系进入工作区，用行星组织主题，用星球与卫星定位知识对象。", page)
         subtitle.setObjectName("cover_subtitle")
+        hint = QLabel(
+            "操作提示：左键拖拽移动星系或星体，按住左键并滚动鼠标滚轮缩放星图；双击星球进入编辑，右键打开管理菜单。",
+            page,
+        )
+        hint.setObjectName("cover_hint")
+        hint.setWordWrap(True)
 
         self.cover_storage_button.setObjectName("cover_secondary_button")
         self.cover_new_workspace_button.setObjectName("cover_primary_button")
@@ -161,6 +223,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(title)
         layout.addWidget(subtitle)
         layout.addLayout(button_layout)
+        layout.addWidget(hint)
         layout.addWidget(self.cover_graph, 1)
         return page
 
@@ -231,7 +294,7 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.search_dock)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.outline_dock)
         self.tabifyDockWidget(self.search_dock, self.outline_dock)
-        self.search_dock.raise_()
+        self.outline_dock.raise_()
         self.resizeDocks([self.note_dock], [300], Qt.Orientation.Horizontal)
         self.resizeDocks(
             [self.note_dock, self.search_dock],
@@ -263,32 +326,75 @@ class MainWindow(QMainWindow):
         self._set_main_toolbar_expanded(self.actions.toggle_main_toolbar.isChecked())
         self.statusBar().show()
         self.note_dock.show()
-        self.search_dock.show()
-        self.outline_dock.show()
-        self._stabilize_right_docks()
         self.actions.toggle_notes.setChecked(True)
-        self.actions.toggle_search.setChecked(True)
-        self.actions.toggle_outline.setChecked(True)
+        self._show_right_sidebar(self._active_right_sidebar)
         self.status_label.setText("工作台")
 
     def _stabilize_right_docks(self, active: str | None = None) -> None:
         self.setTabPosition(Qt.DockWidgetArea.RightDockWidgetArea, QTabWidget.TabPosition.North)
+        if active in {"search", "outline"}:
+            self._show_right_sidebar(active)
+            return
+
         if self.search_dock.isVisible() and self.outline_dock.isVisible():
-            self.tabifyDockWidget(self.search_dock, self.outline_dock)
-        if active == "search" and self.search_dock.isVisible():
+            self._show_right_sidebar(self._active_right_sidebar)
+        elif self.search_dock.isVisible():
+            self._active_right_sidebar = "search"
+            self._sync_right_sidebar_actions("search")
+        elif self.outline_dock.isVisible():
+            self._active_right_sidebar = "outline"
+            self._sync_right_sidebar_actions("outline")
+        else:
+            self._sync_right_sidebar_actions(None)
+
+    def _sync_right_sidebar_actions(self, active: str | None) -> None:
+        blockers = [
+            QSignalBlocker(self.actions.toggle_search),
+            QSignalBlocker(self.actions.toggle_outline),
+        ]
+        self.actions.toggle_search.setChecked(active == "search")
+        self.actions.toggle_outline.setChecked(active == "outline")
+        del blockers
+
+    def _show_right_sidebar(self, active: str, *, focus: bool = False) -> None:
+        if active not in {"search", "outline"}:
+            active = "outline"
+
+        self._active_right_sidebar = active
+        self.setTabPosition(Qt.DockWidgetArea.RightDockWidgetArea, QTabWidget.TabPosition.North)
+        self.tabifyDockWidget(self.search_dock, self.outline_dock)
+
+        if active == "search":
+            self.outline_dock.hide()
+            self.search_dock.show()
             self.search_dock.raise_()
-        elif active == "outline" and self.outline_dock.isVisible():
+            if focus:
+                self.search_dock.focus_search()
+        else:
+            self.search_dock.hide()
+            self.outline_dock.show()
             self.outline_dock.raise_()
+            if focus:
+                self.outline_dock.focus_default()
+
+        self._sync_right_sidebar_actions(active)
+
+    def _hide_right_sidebar(self) -> None:
+        self.search_dock.hide()
+        self.outline_dock.hide()
+        self._sync_right_sidebar_actions(None)
 
     def _handle_search_visibility_action(self, checked: bool) -> None:
         if checked:
-            self._stabilize_right_docks("search")
-            self.search_dock.focus_search()
+            self._show_right_sidebar("search", focus=True)
+        elif self._active_right_sidebar == "search":
+            self._hide_right_sidebar()
 
     def _handle_outline_visibility_action(self, checked: bool) -> None:
         if checked:
-            self._stabilize_right_docks("outline")
-            self.outline_dock.focus_default()
+            self._show_right_sidebar("outline", focus=True)
+        elif self._active_right_sidebar == "outline":
+            self._hide_right_sidebar()
 
     def _set_main_toolbar_expanded(self, expanded: bool) -> None:
         self.actions.toggle_main_toolbar.setText("收起工具栏" if expanded else "展开工具栏")
@@ -452,13 +558,9 @@ class MainWindow(QMainWindow):
         self.actions.toggle_main_toolbar.toggled.connect(self._set_main_toolbar_expanded)
 
         self.actions.toggle_notes.toggled.connect(self.note_dock.setVisible)
-        self.actions.toggle_search.toggled.connect(self.search_dock.setVisible)
-        self.actions.toggle_outline.toggled.connect(self.outline_dock.setVisible)
         self.actions.toggle_search.triggered.connect(self._handle_search_visibility_action)
         self.actions.toggle_outline.triggered.connect(self._handle_outline_visibility_action)
         self.note_dock.visibilityChanged.connect(self.actions.toggle_notes.setChecked)
-        self.search_dock.visibilityChanged.connect(self.actions.toggle_search.setChecked)
-        self.outline_dock.visibilityChanged.connect(self.actions.toggle_outline.setChecked)
 
         self.note_dock.note_selected.connect(self.open_note)
         self.note_dock.delete_note_requested.connect(self.delete_note)
@@ -475,7 +577,7 @@ class MainWindow(QMainWindow):
         self.note_dock.knowledge_model_changed.connect(self._sync_cover_graph)
         self.note_dock.new_note_requested.connect(self.create_new_note)
         self.note_dock.refresh_requested.connect(self.refresh_workspace)
-        self.search_dock.result_selected.connect(self.open_note)
+        self.search_dock.result_selected.connect(self._open_search_result)
         self.outline_dock.heading_selected.connect(self.goto_line)
         self.outline_dock.pdf_selected.connect(self.open_pdf_placeholder)
         self.outline_dock.annotation_delete_requested.connect(self.delete_pdf_annotation)
@@ -646,14 +748,21 @@ class MainWindow(QMainWindow):
             return
         note_visible, search_visible, outline_visible = previous
         self.note_dock.setVisible(note_visible)
-        self.search_dock.setVisible(search_visible)
-        self.outline_dock.setVisible(outline_visible)
-        self._stabilize_right_docks()
         self.actions.toggle_notes.setChecked(note_visible)
-        self.actions.toggle_search.setChecked(search_visible)
-        self.actions.toggle_outline.setChecked(outline_visible)
+        if search_visible or outline_visible:
+            if search_visible and not outline_visible:
+                active = "search"
+            elif outline_visible and not search_visible:
+                active = "outline"
+            else:
+                active = self._active_right_sidebar
+            self._show_right_sidebar(active)
+        else:
+            self._hide_right_sidebar()
 
     def _load_workspace(self) -> None:
+        self.search_dock.set_search_controller(self.search_controller)
+        self.outline_dock.set_reference_controller(self.reference_controller)
         self.note_dock.set_workspace(self.workspace_root)
         self.search_dock.set_workspace(self.workspace_root)
         self.outline_dock.set_workspace(self.workspace_root)
@@ -686,22 +795,52 @@ class MainWindow(QMainWindow):
         self._update_tab_title(self.editor)
         self._refresh_document_panels()
 
+    def _open_search_result(self, payload: object) -> None:
+        if isinstance(payload, dict):
+            object_kind = str(payload.get("object_kind") or "")
+            path_value = (
+                payload.get("file_path")
+                or payload.get("pdf_path")
+                or payload.get("display_path")
+                or payload.get("source_path")
+                or payload.get("path")
+            )
+            if not path_value:
+                self.status_label.setText("搜索结果缺少可打开路径")
+                return
+
+            path = self._workspace_relative_path(path_value)
+            if object_kind == "reference" or path.suffix.lower() == ".pdf":
+                self.open_pdf_placeholder(path)
+            else:
+                self.open_note(path)
+            return
+
+        self.open_note(payload)
+
     def open_note(self, note_path: object) -> None:
         self.show_workbench()
         path = Path(note_path)
-        if not path.exists() or not path.is_file():
-            self.status_label.setText("无法打开所选文件")
-            return
-
-        try:
-            text = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
+        result = self.note_controller.open_note(self.workspace_root, path)
+        if not result.get("success"):
             self._show_message(
                 QMessageBox.Icon.Warning,
                 "无法打开",
-                "该文件不是 UTF-8 Markdown 文档。",
+                str(result.get("message") or "无法打开所选 Markdown 文档。"),
             )
             return
+
+        data = result.get("data", {})
+        note = data.get("note", {}) if isinstance(data, dict) else {}
+        if not isinstance(note, dict):
+            self.status_label.setText("笔记数据格式异常")
+            return
+
+        path = Path(str(note.get("file_path") or path))
+        text = str(note.get("markdown_content") or "")
+        note_id = str(note.get("note_id") or path.stem)
+        note_title = title_for_path(self.workspace_root, path) or path.stem
+        file_mtime = float(note.get("file_mtime") or path.stat().st_mtime)
 
         existing_index = self._find_note_tab(path)
         if existing_index >= 0:
@@ -719,13 +858,12 @@ class MainWindow(QMainWindow):
         ):
             editor = NoteEditorWidget(self)
 
-        note_title = title_for_path(self.workspace_root, path) or path.stem
         editor.load_document(
             text=text,
-            note_id=path.stem,
+            note_id=note_id,
             title=note_title,
             file_path=str(path),
-            file_mtime=path.stat().st_mtime,
+            file_mtime=file_mtime,
         )
         if self.workspace_tabs.indexOf(editor) >= 0:
             self.current_note_path = path
@@ -777,21 +915,34 @@ class MainWindow(QMainWindow):
         if current_path is None:
             current_path = self.notes_dir / f"{self._safe_filename(title)}.md"
 
-        target_path = self._target_note_path_for_title(current_path, title)
         old_path = current_path
-        self.notes_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            target_path.write_text(
-                str(payload.get("markdown_content", editor.get_text())),
-                encoding="utf-8",
-            )
-            if target_path.resolve() != current_path.resolve() and current_path.exists():
-                current_path.unlink()
-        except OSError as error:
+        save_payload = dict(payload)
+        save_payload["title"] = title
+        save_payload["file_path"] = str(current_path)
+        save_payload["markdown_content"] = str(
+            save_payload.get("markdown_content", editor.get_text())
+        )
+
+        result = self.note_controller.save_note(self.workspace_root, save_payload)
+        if not result.get("success"):
             editor.mark_save_failed()
-            self._show_message(QMessageBox.Icon.Critical, "保存失败", str(error))
+            self._show_message(
+                QMessageBox.Icon.Critical,
+                "保存失败",
+                str(result.get("message") or "后端保存笔记失败。"),
+            )
             return
 
+        data = result.get("data", {})
+        note = data.get("note", {}) if isinstance(data, dict) else {}
+        if not isinstance(note, dict):
+            editor.mark_save_failed()
+            self._show_message(QMessageBox.Icon.Critical, "保存失败", "后端返回的笔记数据格式异常。")
+            return
+
+        target_path = Path(str(note.get("file_path") or current_path))
+        file_mtime = float(note.get("file_mtime") or target_path.stat().st_mtime)
+        title = str(note.get("title") or title)
         try:
             if target_path.resolve() != old_path.resolve():
                 remove_title_for_path(self.workspace_root, old_path)
@@ -801,7 +952,7 @@ class MainWindow(QMainWindow):
 
         self.current_note_path = target_path
         editor.get_document().bind_file_path(target_path)
-        editor.mark_saved(file_mtime=target_path.stat().st_mtime)
+        editor.mark_saved(file_mtime=file_mtime)
         self._update_tab_title(editor)
         self.note_dock.refresh()
         self._refresh_knowledge_model_from_controller()
@@ -855,10 +1006,13 @@ class MainWindow(QMainWindow):
             path.resolve() == self.current_note_path.resolve()
         )
 
-        try:
-            path.unlink()
-        except OSError as error:
-            self._show_message(QMessageBox.Icon.Critical, "删除失败", str(error))
+        result = self.note_controller.delete_note(self.workspace_root, path)
+        if not result.get("success"):
+            self._show_message(
+                QMessageBox.Icon.Critical,
+                "删除失败",
+                str(result.get("message") or "后端删除笔记失败。"),
+            )
             return
 
         try:
@@ -1356,17 +1510,11 @@ class MainWindow(QMainWindow):
 
     def focus_search_panel(self) -> None:
         self.show_workbench()
-        self.actions.toggle_search.setChecked(True)
-        self.search_dock.show()
-        self._stabilize_right_docks("search")
-        self.search_dock.focus_search()
+        self._show_right_sidebar("search", focus=True)
 
     def focus_outline_panel(self) -> None:
         self.show_workbench()
-        self.actions.toggle_outline.setChecked(True)
-        self.outline_dock.show()
-        self._stabilize_right_docks("outline")
-        self.outline_dock.focus_default()
+        self._show_right_sidebar("outline", focus=True)
 
     def open_knowledge_object(self, selection: KnowledgeSelection) -> None:
         if selection.path is not None and not self._ensure_workspace_for_path(selection.path):
@@ -1474,19 +1622,6 @@ class MainWindow(QMainWindow):
         planet_title = self.note_dock.planet_display_title(planet)
         self.status_label.setText(
             f"已归入 {planet_title} 行星: {target['object_kind']}:{target['object_key']}"
-        )
-        return
-
-        target_path = Path(path)
-        self.note_dock.assign_path_to_planet(target_path, planet)
-        self._sync_cover_graph()
-        self.note_dock.tabs.setCurrentWidget(self.note_dock.model_page)
-        self.status_label.setText(f"已归入 {planet} 行星: {target_path.name}")
-        self._show_message(
-            QMessageBox.Icon.Information,
-            "知识对象归类",
-            f"已在 UI 展示层归入：\n{target_path.name} → {planet}\n\n"
-            "当前归类结果保存在本次界面会话中，实际持久化等待 controller/service 接口接入。",
         )
 
     def open_pdf_from_dialog(self) -> None:
@@ -1694,7 +1829,10 @@ class MainWindow(QMainWindow):
             return existing_id
 
         base_reference_id = (preferred_reference_id or self._guess_reference_key(resolved_pdf)).strip()
-        existing_by_id = self.reference_service.get_reference(self.workspace_root, base_reference_id)
+        existing_by_id = self.reference_controller.get_reference(
+            self.workspace_root,
+            base_reference_id,
+        )
         if existing_by_id.get("success"):
             data = existing_by_id.get("data", {})
             reference = data.get("reference", {}) if isinstance(data, dict) else {}
@@ -1703,7 +1841,7 @@ class MainWindow(QMainWindow):
                     return base_reference_id
 
         reference_id = self._unique_reference_id(base_reference_id)
-        create_result = self.reference_service.create_reference(
+        create_result = self.reference_controller.create_reference(
             self.workspace_root,
             {
                 "reference_id": reference_id,
@@ -1724,7 +1862,7 @@ class MainWindow(QMainWindow):
                 )
             return None
 
-        bind_result = self.reference_service.bind_pdf(
+        bind_result = self.reference_controller.bind_pdf(
             self.workspace_root,
             reference_id,
             resolved_pdf,
@@ -1749,7 +1887,7 @@ class MainWindow(QMainWindow):
         *,
         silent: bool = False,
     ) -> bool:
-        existing = self.reference_service.get_reference(self.workspace_root, reference_id)
+        existing = self.reference_controller.get_reference(self.workspace_root, reference_id)
         if not existing.get("success"):
             return False
 
@@ -1758,12 +1896,12 @@ class MainWindow(QMainWindow):
         stored_pdf = reference.get("pdf_path") if isinstance(reference, dict) else None
         if stored_pdf:
             try:
-                if Path(str(stored_pdf)).expanduser().resolve() == pdf_path.expanduser().resolve():
+                if self._workspace_relative_path(stored_pdf).expanduser().resolve() == pdf_path.expanduser().resolve():
                     return True
             except OSError:
                 pass
 
-        bind_result = self.reference_service.bind_pdf(self.workspace_root, reference_id, pdf_path)
+        bind_result = self.reference_controller.bind_pdf(self.workspace_root, reference_id, pdf_path)
         if not bind_result.get("success"):
             if not silent:
                 self._show_message(
@@ -1793,7 +1931,7 @@ class MainWindow(QMainWindow):
         return tuple(sorted(pdfs, key=lambda item: str(item).lower()))
 
     def _reference_id_for_pdf_path(self, pdf_path: Path) -> str | None:
-        list_result = self.reference_service.list_references(self.workspace_root)
+        list_result = self.reference_controller.list_references(self.workspace_root)
         if not list_result.get("success"):
             return None
 
@@ -1807,12 +1945,13 @@ class MainWindow(QMainWindow):
             stored_pdf = reference.get("pdf_path")
             if not stored_pdf:
                 continue
+            stored_path = self._workspace_relative_path(stored_pdf)
             try:
-                if Path(str(stored_pdf)).expanduser().resolve() == resolved_pdf:
+                if stored_path.expanduser().resolve() == resolved_pdf:
                     return str(reference.get("reference_id") or "")
             except OSError:
                 pass
-            if target_key and self._pdf_identity_key(Path(str(stored_pdf))) == target_key:
+            if target_key and self._pdf_identity_key(stored_path) == target_key:
                 return str(reference.get("reference_id") or "")
         return None
 
@@ -1831,7 +1970,7 @@ class MainWindow(QMainWindow):
         base = reference_id or "reference"
         candidate = base
         suffix = 2
-        while self.reference_service.get_reference(self.workspace_root, candidate).get("success"):
+        while self.reference_controller.get_reference(self.workspace_root, candidate).get("success"):
             candidate = f"{base}-{suffix}"
             suffix += 1
         return candidate
@@ -1878,13 +2017,11 @@ class MainWindow(QMainWindow):
 
         self._refresh_knowledge_model_from_controller()
         self._sync_cover_graph()
-        self.outline_dock.show()
-        self.actions.toggle_outline.setChecked(True)
         self.outline_dock.set_object_context(
             self._selection_for_pdf_reference(path=pdf_path, reference_id=reference_id)
         )
+        self._show_right_sidebar("outline")
         self.outline_dock.focus_satellite_page()
-        self._stabilize_right_docks(active="outline")
         self.status_label.setText(f"已保存 PDF 批注: {reference_id} 第 {page_number} 页")
 
     def delete_pdf_annotation(self, annotation_id: str) -> None:
@@ -1920,6 +2057,7 @@ class MainWindow(QMainWindow):
             self.outline_dock.set_object_context(
                 self._selection_for_pdf_reference(path=pdf_path, reference_id=reference_id)
             )
+            self._show_right_sidebar("outline")
             self.outline_dock.focus_satellite_page()
         self.status_label.setText("已删除 PDF 批注")
 
@@ -2006,7 +2144,7 @@ class MainWindow(QMainWindow):
         self._show_message(
             QMessageBox.Icon.Information,
             "关于 Agni",
-            "Agni 当前工作台提供三栏布局、Markdown 编辑、工作区资源、全文搜索、反向链接、大纲与 PDF 面板。当前界面层不直接操作数据库，后续可继续接入 service 与 repository。",
+            "Agni 当前工作台已接入笔记、搜索、反向链接、文献、PDF 与知识模型后端接口。界面继续保留三栏布局、Markdown 编辑、星图、文档导航和 PDF 阅读等现有交互。",
         )
 
     def _show_message(self, icon: QMessageBox.Icon, title: str, text: str) -> None:
@@ -2155,6 +2293,12 @@ class MainWindow(QMainWindow):
         cleaned = "-".join(cleaned.split())
         return cleaned or "Untitled"
 
+    def _workspace_relative_path(self, path_value: object) -> Path:
+        path = Path(str(path_value))
+        if not path.is_absolute():
+            path = self.workspace_root / path
+        return path
+
     def _is_deletable_note_path(self, note_path: Path) -> bool:
         try:
             resolved_note = note_path.resolve()
@@ -2166,8 +2310,18 @@ class MainWindow(QMainWindow):
         return resolved_note.suffix.lower() == ".md"
 
     def _find_first_note(self) -> Path | None:
+        result = self.note_controller.list_notes(self.workspace_root)
+        if result.get("success"):
+            data = result.get("data", {})
+            notes = data.get("notes", ()) if isinstance(data, dict) else ()
+            for note in notes:
+                if not isinstance(note, dict):
+                    continue
+                file_path = note.get("file_path")
+                if file_path:
+                    return Path(str(file_path))
+
         if not self.notes_dir.exists():
             return None
-
         notes = sorted(self.notes_dir.rglob("*.md"), key=lambda item: item.name.lower())
         return notes[0] if notes else None
