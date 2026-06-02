@@ -19,8 +19,10 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QStackedWidget,
+    QTabBar,
     QTabWidget,
     QToolBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -171,9 +173,10 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(build_app_stylesheet())
         self.cover_page = self._build_cover_page()
         self.workspace_tabs.setObjectName("workspace_tabs")
-        self.workspace_tabs.setTabsClosable(True)
+        self.workspace_tabs.setTabsClosable(False)
         self.workspace_tabs.setMovable(True)
         self.workspace_tabs.addTab(self.editor, "未命名")
+        self._refresh_tab_close_buttons()
         self.central_stack.addWidget(self.cover_page)
         self.central_stack.addWidget(self.workspace_tabs)
         self.setCentralWidget(self.central_stack)
@@ -203,7 +206,7 @@ class MainWindow(QMainWindow):
 
         self.cover_storage_button.setObjectName("cover_secondary_button")
         self.cover_new_workspace_button.setObjectName("cover_primary_button")
-        self.cover_delete_workspace_button.setObjectName("cover_secondary_button")
+        self.cover_delete_workspace_button.setObjectName("cover_danger_button")
         self.cover_return_button.setObjectName("cover_secondary_button")
         self.cover_storage_button.clicked.connect(self.choose_workspace_store_root)
         self.cover_new_workspace_button.clicked.connect(self.create_new_workspace)
@@ -213,9 +216,9 @@ class MainWindow(QMainWindow):
 
         button_layout = QHBoxLayout()
         button_layout.setContentsMargins(0, 0, 0, 0)
-        button_layout.setSpacing(10)
-        button_layout.addWidget(self.cover_storage_button)
+        button_layout.setSpacing(12)
         button_layout.addWidget(self.cover_new_workspace_button)
+        button_layout.addWidget(self.cover_storage_button)
         button_layout.addWidget(self.cover_delete_workspace_button)
         button_layout.addWidget(self.cover_return_button)
         button_layout.addStretch(1)
@@ -653,6 +656,7 @@ class MainWindow(QMainWindow):
     def _add_note_tab(self, editor: NoteEditorWidget, title: str, note_path: Path | None) -> None:
         index = self.workspace_tabs.addTab(editor, title or "未命名")
         self.workspace_tabs.setTabToolTip(index, str(note_path) if note_path else "未保存笔记")
+        self._refresh_tab_close_buttons()
         self.workspace_tabs.setCurrentIndex(index)
         self.editor = editor
         self.current_note_path = note_path
@@ -661,8 +665,34 @@ class MainWindow(QMainWindow):
     def _add_pdf_tab(self, viewer: PdfViewerWidget, pdf_path: Path) -> None:
         index = self.workspace_tabs.addTab(viewer, pdf_path.name)
         self.workspace_tabs.setTabToolTip(index, str(pdf_path))
+        self._refresh_tab_close_buttons()
         self.workspace_tabs.setCurrentIndex(index)
         self._connect_pdf_viewer(viewer)
+
+    def _refresh_tab_close_buttons(self) -> None:
+        tab_bar = self.workspace_tabs.tabBar()
+        for index in range(self.workspace_tabs.count()):
+            tab_bar.setTabButton(index, QTabBar.ButtonPosition.LeftSide, None)
+            button = tab_bar.tabButton(index, QTabBar.ButtonPosition.RightSide)
+            if button is None or button.objectName() != "tab_close_button":
+                close_button = QToolButton(tab_bar)
+                close_button.setObjectName("tab_close_button")
+                close_button.setText("×")
+                close_button.clicked.connect(
+                    lambda _checked=False, target=close_button: self._close_tab_from_button(target)
+                )
+                button = close_button
+                tab_bar.setTabButton(index, QTabBar.ButtonPosition.RightSide, button)
+            button.setToolTip("")
+            button.setFixedSize(24, 24)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def _close_tab_from_button(self, button: QWidget) -> None:
+        tab_bar = self.workspace_tabs.tabBar()
+        for index in range(self.workspace_tabs.count()):
+            if tab_bar.tabButton(index, QTabBar.ButtonPosition.RightSide) is button:
+                self._close_tab(index)
+                return
 
     def _connect_pdf_viewer(self, viewer: PdfViewerWidget) -> None:
         viewer.page_changed.connect(lambda page, target=viewer: self._on_pdf_page_changed(target, page))
@@ -694,6 +724,7 @@ class MainWindow(QMainWindow):
         self.workspace_tabs.setTabText(index, f"{marker}{title}")
         file_path = target.get_document().file_path
         self.workspace_tabs.setTabToolTip(index, file_path or "未保存笔记")
+        self._refresh_tab_close_buttons()
 
     def _on_tab_changed(self, index: int) -> None:
         widget = self.workspace_tabs.widget(index)
@@ -724,10 +755,12 @@ class MainWindow(QMainWindow):
                 self.current_note_path = None
                 self._update_tab_title(widget)
                 self._refresh_document_panels()
+                self._refresh_tab_close_buttons()
             return
 
         self.workspace_tabs.removeTab(index)
         widget.deleteLater()
+        self._refresh_tab_close_buttons()
 
     def _set_pdf_reading_mode(self, enabled: bool) -> None:
         if enabled:
@@ -1479,6 +1512,7 @@ class MainWindow(QMainWindow):
         self.editor.load_empty_document(title="未命名笔记")
         self.workspace_tabs.addTab(self.editor, "未命名")
         self.workspace_tabs.setTabToolTip(0, "未保存笔记")
+        self._refresh_tab_close_buttons()
         self.workspace_tabs.setCurrentIndex(0)
         self._connect_editor(self.editor)
 
@@ -1576,6 +1610,7 @@ class MainWindow(QMainWindow):
         body.setMargin(24)
         index = self.workspace_tabs.addTab(body, selection.title)
         self.workspace_tabs.setTabToolTip(index, tab_key)
+        self._refresh_tab_close_buttons()
         self.workspace_tabs.setCurrentIndex(index)
 
     def _normalize_assignment_target(self, target: object) -> dict[str, str]:

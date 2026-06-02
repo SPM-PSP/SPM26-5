@@ -55,14 +55,13 @@ class KnowledgeConnectorLine(QGraphicsLineItem):
         color: str,
         *,
         width: float = 1.4,
-        dashed: bool = True,
     ) -> None:
         super().__init__()
         self.source = source
         self.target = target
         pen = QPen(QColor(color))
         pen.setWidthF(width)
-        pen.setStyle(Qt.PenStyle.DashLine if dashed else Qt.PenStyle.SolidLine)
+        pen.setStyle(Qt.PenStyle.SolidLine)
         self.setPen(pen)
         self.setZValue(-2)
         self.setOpacity(0.0)
@@ -92,25 +91,18 @@ class KnowledgeCommunicationLine(QGraphicsPathItem):
         self.source = source
         self.target = target
         self.curve_offset = curve_offset
-        self._dash_offset = 0.0
 
         pen = QPen(QColor(color))
         pen.setWidthF(1.85)
         pen.setCosmetic(True)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        pen.setDashPattern([6.0, 7.0])
+        pen.setStyle(Qt.PenStyle.SolidLine)
         self.setPen(pen)
         self.setZValue(-3)
         self.setOpacity(0.72)
         self.source.add_connector(self)
         self.target.add_connector(self)
         self.update_position()
-
-    def set_dash_offset(self, offset: float) -> None:
-        self._dash_offset = offset
-        pen = self.pen()
-        pen.setDashOffset(offset)
-        self.setPen(pen)
 
     def update_position(self) -> None:
         start_center = self.source.scenePos()
@@ -178,7 +170,7 @@ class KnowledgeCircleItem(QGraphicsEllipseItem):
 
         self.label_item = QGraphicsTextItem(self)
         self.label_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-        self.label_item.setDefaultTextColor(QColor("#d8e6f3"))
+        self.label_item.setDefaultTextColor(QColor("#374151"))
         self.label_item.setFont(self._label_font())
         self.label_item.setTextWidth(self._label_width())
         self.label_item.setPlainText(self._wrapped_title())
@@ -362,7 +354,7 @@ class KnowledgeOrbitLabelItem(QGraphicsTextItem):
         self._press_scene_pos: QPointF | None = None
         self._press_button: Qt.MouseButton | None = None
         self.setPlainText(node.title)
-        self.setDefaultTextColor(QColor("#dbe9ff"))
+        self.setDefaultTextColor(QColor("#374151"))
         font = QFont("Microsoft YaHei UI", 10)
         font.setBold(True)
         self.setFont(font)
@@ -432,11 +424,11 @@ class KnowledgeOrbitLabelItem(QGraphicsTextItem):
         super().contextMenuEvent(event)
 
     def hoverEnterEvent(self, event) -> None:
-        self.setDefaultTextColor(QColor("#ffffff"))
+        self.setDefaultTextColor(QColor("#2563EB"))
         super().hoverEnterEvent(event)
 
     def hoverLeaveEvent(self, event) -> None:
-        self.setDefaultTextColor(QColor("#dbe9ff"))
+        self.setDefaultTextColor(QColor("#374151"))
         super().hoverLeaveEvent(event)
 
 
@@ -838,7 +830,7 @@ class KnowledgeGraphWidget(QWidget):
                 curve_offset=side * magnitude,
             )
             self.scene.addItem(line)
-            self._animate_communication_line(line)
+            self._pending_fade.append(line)
 
     def _node_link_keys(self, node: KnowledgeGraphNode) -> set[str]:
         keys = set(self._link_key_variants(node.title))
@@ -1092,11 +1084,11 @@ class KnowledgeGraphWidget(QWidget):
         menu.setStyleSheet(
             """
             QMenu#star_map_context_menu {{
-                background-color: rgba(7, 19, 34, 238);
-                border: 1px solid rgba(126, 190, 255, 118);
+                background-color: rgba(255, 255, 255, 246);
+                border: 1px solid rgba(217, 225, 236, 230);
                 border-radius: {radius}px;
                 padding: {outer_padding}px;
-                color: #e4f3ff;
+                color: #111827;
             }}
             QMenu#star_map_context_menu::item {{
                 min-width: {min_width}px;
@@ -1106,13 +1098,13 @@ class KnowledgeGraphWidget(QWidget):
                 background: transparent;
             }}
             QMenu#star_map_context_menu::item:selected {{
-                background-color: rgba(67, 184, 255, 46);
-                color: #ffffff;
+                background-color: rgba(219, 234, 254, 238);
+                color: #2563EB;
             }}
             QMenu#star_map_context_menu::separator {{
                 height: 1px;
                 margin: {separator_margin_v}px {separator_margin_h}px;
-                background-color: rgba(151, 177, 201, 62);
+                background-color: rgba(217, 225, 236, 230);
             }}
             QMenu#star_map_context_menu::right-arrow {{
                 width: {arrow_size}px;
@@ -1275,7 +1267,7 @@ class KnowledgeGraphWidget(QWidget):
                 if band_index == 0:
                     label = self._satellite_layer_label(layer_index)
                     caption_pos = center + QPointF(-band_radius * 0.82, -band_radius * 0.56)
-                    caption = self._add_text_at(label, caption_pos, font_size=9, color="#7f9bb2")
+                    caption = self._add_text_at(label, caption_pos, font_size=9, color="#6B7280")
                     system_items.append(caption)
 
         for layer_index, bands in layer_bands.items():
@@ -1313,7 +1305,7 @@ class KnowledgeGraphWidget(QWidget):
                         orbit_radius=orbit_radius,
                     )
                     system_items.append(satellite_item)
-                    self._add_dashed_line(
+                    self._add_relation_line(
                         star_item,
                         satellite_item,
                         satellite_node.color,
@@ -1473,7 +1465,7 @@ class KnowledgeGraphWidget(QWidget):
             strict=False,
         ):
             satellite_item = self._add_circle(satellite_node, position + offset, 18)
-            self._add_dashed_line(star_item, satellite_item, satellite_node.color)
+            self._add_relation_line(star_item, satellite_item, satellite_node.color)
 
     def _add_circle(
         self,
@@ -1537,7 +1529,7 @@ class KnowledgeGraphWidget(QWidget):
     def _add_orbit(self, center: QPointF, radius: float) -> QGraphicsEllipseItem:
         orbit = QGraphicsEllipseItem(-radius, -radius, radius * 2, radius * 2)
         orbit.setPos(center)
-        pen = QPen(QColor("#d8e6f3"))
+        pen = QPen(QColor("#C8D1DC"))
         pen.setWidthF(0.48)
         pen.setCosmetic(True)
         orbit.setPen(pen)
@@ -1548,16 +1540,15 @@ class KnowledgeGraphWidget(QWidget):
         self._pending_fade.append(orbit)
         return orbit
 
-    def _add_dashed_line(
+    def _add_relation_line(
         self,
         source: KnowledgeCircleItem,
         target: KnowledgeCircleItem,
         color: str,
         *,
         width: float = 1.4,
-        dashed: bool = True,
     ) -> None:
-        line = KnowledgeConnectorLine(source, target, color, width=width, dashed=dashed)
+        line = KnowledgeConnectorLine(source, target, color, width=width)
         self.scene.addItem(line)
         self._pending_fade.append(line)
 
@@ -1570,7 +1561,7 @@ class KnowledgeGraphWidget(QWidget):
         position: QPointF,
         *,
         font_size: int = 12,
-        color: str = "#8da9bd",
+        color: str = "#6B7280",
     ) -> QGraphicsTextItem:
         item = QGraphicsTextItem(text)
         item.setDefaultTextColor(QColor(color))
@@ -1687,17 +1678,6 @@ class KnowledgeGraphWidget(QWidget):
                 target.setPos(value)
 
         animation.valueChanged.connect(apply_position)
-        self._animations.append(animation)
-        animation.start()
-
-    def _animate_communication_line(self, line: KnowledgeCommunicationLine) -> None:
-        animation = QVariantAnimation(self)
-        animation.setDuration(1250)
-        animation.setStartValue(0.0)
-        animation.setEndValue(-26.0)
-        animation.setLoopCount(-1)
-        animation.setEasingCurve(QEasingCurve.Type.Linear)
-        animation.valueChanged.connect(lambda value, target=line: target.set_dash_offset(float(value)))
         self._animations.append(animation)
         animation.start()
 

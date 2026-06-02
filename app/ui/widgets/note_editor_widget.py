@@ -5,7 +5,7 @@ app/ui/widgets/note_editor_widget.py
 当前行源码编辑，其他行保持 Markdown 渲染。
 
 本版重点：
-1. 统一深色主题；
+1. 统一浅色主题；
 2. 当前编辑行背景与整体风格一致；
 3. 当前编辑行文字更清晰；
 4. 保持与 main_window.py 的现有接口兼容。
@@ -39,7 +39,7 @@ EDITOR_FONT_FAMILY = "Microsoft YaHei UI"
 EDITOR_FONT_FALLBACK = '"Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif'
 EDITOR_HTML_FONT_RULE = f"font-family: {EDITOR_FONT_FALLBACK};"
 EDITOR_FONT_POINT_SIZE = 11
-EDITOR_TEXT_COLOR = "#dbe9ff"
+EDITOR_TEXT_COLOR = "#111827"
 EDITOR_CONTENT_PADDING_X = 24
 EDITOR_CONTENT_PADDING_Y = 18
 EDITOR_LINE_PADDING_Y = 3
@@ -86,13 +86,13 @@ class FloatingLineEditor(QPlainTextEdit):
 
         self.setStyleSheet("""
             QPlainTextEdit {
-                background-color: #071a2f;
-                color: #dbe9ff;
+                background-color: #FFFFFF;
+                color: #111827;
                 border: none;
                 border-radius: 0;
                 padding: 3px 0;
-                selection-background-color: #1f5d99;
-                selection-color: #ffffff;
+                selection-background-color: #BFDBFE;
+                selection-color: #111827;
             }
         """)
 
@@ -173,20 +173,20 @@ class NoteEditorWidget(QWidget):
         self.setObjectName("note_editor_widget")
         self.setStyleSheet("""
             QWidget#note_editor_widget {
-                background-color: #06182d;
+                background-color: #FFFFFF;
             }
             QLabel {
-                color: #dbe9ff;
+                color: #374151;
             }
             QLineEdit {
-                background-color: #071a2f;
-                color: #eaf2ff;
-                border: 1px solid #1f5d99;
+                background-color: #FFFFFF;
+                color: #111827;
+                border: 1px solid #D9E1EC;
                 border-radius: 8px;
                 padding: 6px 10px;
             }
             QLineEdit:focus {
-                border: 1px solid #4f8cff;
+                border: 1px solid #2563EB;
             }
         """)
 
@@ -229,9 +229,9 @@ class NoteEditorWidget(QWidget):
 
         self.preview.setStyleSheet("""
             QTextBrowser {
-                background-color: #071a2f;
-                color: #eaf2ff;
-                border: 1px solid #1f5d99;
+                background-color: #FFFFFF;
+                color: #111827;
+                border: 1px solid #E6EAF0;
                 border-radius: 8px;
                 padding: 0;
             }
@@ -320,7 +320,7 @@ class NoteEditorWidget(QWidget):
                 padding: 0;
                 margin: 0;
                 color: {EDITOR_TEXT_COLOR};
-                background: #071a2f;
+                background: #FFFFFF;
                 text-align: left;
             }}
             .agni-line {{
@@ -333,7 +333,7 @@ class NoteEditorWidget(QWidget):
                 text-align: left;
             }}
             .editing-line {{
-                background: #071a2f;
+                background: #FFFFFF;
                 border: none;
                 border-radius: 0;
             }}
@@ -343,7 +343,7 @@ class NoteEditorWidget(QWidget):
             h1, h2, h3, h4, h5, h6 {{
                 margin: 8px 0 6px 0;
                 font-weight: 700;
-                color: #ffffff;
+                color: #111827;
             }}
             h1 {{ font-size: 20pt; }}
             h2 {{ font-size: 17pt; }}
@@ -359,7 +359,7 @@ class NoteEditorWidget(QWidget):
             
             .agni-hr {{
                 border: none;
-                border-top: 1px solid #2f6ea8;
+                border-top: 1px solid #D9E1EC;
                 margin: 8px 0;
             }}
 
@@ -369,37 +369,37 @@ class NoteEditorWidget(QWidget):
             }}
 
             .blockquote {{
-                border-left: 3px solid #2f6ea8;
+                border-left: 3px solid #93C5FD;
                 padding-left: 10px;
-                color: #b9d4ff;
+                color: #374151;
             }}
 
             .code-inline {{
-                background: #102845;
-                border: 1px solid #1e466d;
+                background: #F8FAFC;
+                border: 1px solid #E6EAF0;
                 border-radius: 4px;
                 padding: 1px 4px;
                 font-family: Consolas, monospace;
-                color: #ffd580;
+                color: #B45309;
             }}
 
             .wikilink {{
-                color: #6cb6ff;
+                color: #2563EB;
                 font-weight: 600;
             }}
 
             .citation {{
-                color: #c792ea;
+                color: #8B5CF6;
                 font-weight: 600;
             }}
 
             a {{
-                color: #6cb6ff;
+                color: #2563EB;
                 text-decoration: none;
             }}
 
             strong {{
-                color: #ffffff;
+                color: #111827;
                 font-weight: 700;
             }}
 
