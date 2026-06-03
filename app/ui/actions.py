@@ -290,7 +290,7 @@ def build_app_stylesheet() -> str:
     }}
 
     QWidget#graph_cover_page QGraphicsView#knowledge_graph_view {{
-        background: {t["canvas_bg"]};
+        background: #111827;
         border: 1px solid {t["border_normal"]};
         border-radius: 10px;
         padding: 0;

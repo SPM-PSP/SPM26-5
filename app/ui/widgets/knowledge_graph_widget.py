@@ -34,6 +34,10 @@ PLANET_DEFAULT_COLOR = "#d6dde3"
 PLANET_UNASSIGNED_COLOR = "#9aa8b3"
 BACKLINK_COMMUNICATION_COLOR = "#6cb6ff"
 CITATION_COMMUNICATION_COLOR = "#c792ea"
+STAR_MAP_BACKGROUND_COLOR = "#111827"
+STAR_MAP_TEXT_COLOR = "#E5E7EB"
+STAR_MAP_TEXT_MUTED_COLOR = "#CBD5E1"
+STAR_MAP_TEXT_HOVER_COLOR = "#93C5FD"
 
 PLANET_COLORS = {
     "Inbox": PLANET_DEFAULT_COLOR,
@@ -170,7 +174,7 @@ class KnowledgeCircleItem(QGraphicsEllipseItem):
 
         self.label_item = QGraphicsTextItem(self)
         self.label_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-        self.label_item.setDefaultTextColor(QColor("#374151"))
+        self.label_item.setDefaultTextColor(QColor(STAR_MAP_TEXT_COLOR))
         self.label_item.setFont(self._label_font())
         self.label_item.setTextWidth(self._label_width())
         self.label_item.setPlainText(self._wrapped_title())
@@ -354,7 +358,7 @@ class KnowledgeOrbitLabelItem(QGraphicsTextItem):
         self._press_scene_pos: QPointF | None = None
         self._press_button: Qt.MouseButton | None = None
         self.setPlainText(node.title)
-        self.setDefaultTextColor(QColor("#374151"))
+        self.setDefaultTextColor(QColor(STAR_MAP_TEXT_COLOR))
         font = QFont("Microsoft YaHei UI", 10)
         font.setBold(True)
         self.setFont(font)
@@ -424,11 +428,11 @@ class KnowledgeOrbitLabelItem(QGraphicsTextItem):
         super().contextMenuEvent(event)
 
     def hoverEnterEvent(self, event) -> None:
-        self.setDefaultTextColor(QColor("#2563EB"))
+        self.setDefaultTextColor(QColor(STAR_MAP_TEXT_HOVER_COLOR))
         super().hoverEnterEvent(event)
 
     def hoverLeaveEvent(self, event) -> None:
-        self.setDefaultTextColor(QColor("#374151"))
+        self.setDefaultTextColor(QColor(STAR_MAP_TEXT_COLOR))
         super().hoverLeaveEvent(event)
 
 
@@ -484,6 +488,7 @@ class KnowledgeGraphWidget(QWidget):
         root_layout.addLayout(header_layout)
 
         self.scene = QGraphicsScene(self)
+        self.scene.setBackgroundBrush(QBrush(QColor(STAR_MAP_BACKGROUND_COLOR)))
         self.view = QGraphicsView(self.scene, self)
         self.view.setObjectName("knowledge_graph_view")
         self.view.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -1583,7 +1588,7 @@ class KnowledgeGraphWidget(QWidget):
         position: QPointF,
         *,
         font_size: int = 12,
-        color: str = "#6B7280",
+        color: str = STAR_MAP_TEXT_MUTED_COLOR,
     ) -> QGraphicsTextItem:
         item = QGraphicsTextItem(text)
         item.setDefaultTextColor(QColor(color))
